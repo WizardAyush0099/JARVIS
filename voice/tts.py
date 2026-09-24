@@ -77,6 +77,10 @@ class AudioSink(ABC):
     @abstractmethod
     def play_file(self, path: Path) -> bool: ...
 
+    def stop(self) -> bool:
+        """Cut the current sound short.  Best effort, never raises."""
+        return False
+
 
 class NullSink(AudioSink):
     name = "none"
@@ -93,16 +97,32 @@ class PygameSink(AudioSink):
 
         pygame.mixer.init()
         self._pygame = pygame
+        #: set by `stop()` so the playback loop can cut a clip short.  Must exist
+        #: before `play_file` reads it, or the first real playback raises inside
+        #: the loop and is reported (and swallowed) as a generic failure.
+        self._stopped = False
 
     def play_file(self, path: Path) -> bool:
         try:
             self._pygame.mixer.music.load(str(path))
             self._pygame.mixer.music.play()
             while self._pygame.mixer.music.get_busy():
+                if self._stopped:
+                    break
                 time.sleep(0.05)
             return True
         except Exception as exc:  # noqa: BLE001
             log.warning("pygame playback failed: %s", exc)
+            return False
+        finally:
+            self._stopped = False
+
+    def stop(self) -> bool:
+        self._stopped = True
+        try:
+            self._pygame.mixer.music.stop()
+            return True
+        except Exception:  # noqa: BLE001
             return False
 
 
@@ -120,6 +140,7 @@ class CommandSink(AudioSink):
 
     def __init__(self) -> None:
         self._commands = []
+        self._process: Optional[subprocess.Popen] = None
         for name, prefix in self.CANDIDATES:
             found = shutil.which(name)
             if found:
@@ -133,14 +154,32 @@ class CommandSink(AudioSink):
     def play_file(self, path: Path) -> bool:
         for command in self._commands:
             try:
-                result = subprocess.run(
-                    [*command, str(path)], capture_output=True, timeout=180
+                # Popen rather than run() so "stop" can end playback mid-sentence
+                process = subprocess.Popen(
+                    [*command, str(path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
-                if result.returncode == 0:
+                self._process = process
+                try:
+                    process.wait(timeout=180)
+                finally:
+                    self._process = None
+                if process.returncode == 0:
                     return True
             except Exception:
                 continue
         return False
+
+    def stop(self) -> bool:
+        process = self._process
+        if process is None:
+            return False
+        try:
+            process.terminate()
+            return True
+        except Exception:  # noqa: BLE001
+            return False
 
 
 def build_sink(preferred: Optional[str] = None) -> AudioSink:
@@ -204,6 +243,8 @@ class EdgeTTSEngine(TTSEngine):
         volume_arg = f"{max(0, min(100, volume)):+d}%"
 
         target = cache_dir / f"{hashlib.sha1((voice + text).encode()).hexdigest()}.mp3"
+        if target.exists() and target.stat().st_size > 0:
+            return target  # already synthesized: no second network round trip
 
         async def run() -> None:
             communicate = edge_tts.Communicate(text, voice, rate=rate_arg, volume=volume_arg)
@@ -242,6 +283,8 @@ class PiperTTSEngine(TTSEngine):
             log.debug("piper model not configured (set PIPER_MODEL)")
             return None
         target = cache_dir / f"{hashlib.sha1((model + text).encode()).hexdigest()}.wav"
+        if target.exists() and target.stat().st_size > 0:
+            return target
         try:
             result = subprocess.run(
                 [binary, "--model", model, "--output_file", str(target)],
@@ -304,6 +347,8 @@ class EspeakEngine(TTSEngine):
         if not binary:
             return None
         target = cache_dir / f"{hashlib.sha1((binary + text).encode()).hexdigest()}.wav"
+        if target.exists() and target.stat().st_size > 0:
+            return target
         voice = "hi" if language == "hi" else "en-gb"
         try:
             subprocess.run(
@@ -366,12 +411,17 @@ class Speaker:
         self._stop = threading.Event()
         self._speaking = threading.Event()
         self._muted = not bool(getattr(settings.tts, "enabled", True))
+        #: False when the audio is delivered to a browser instead of the local sink
+        self._local_output = True
         cache = getattr(getattr(settings, "paths", None), "voice_cache_dir", None)
         self.cache_dir = Path(cache) if cache else Path("assets") / "voice_cache"
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             pass
+        #: cleaned text -> audio file already produced this run, so a repeated
+        #: sentence costs nothing on any engine (and no network call on edge)
+        self._path_cache: Dict[str, Path] = {}
         self.spoken_count = 0
         self.failures = 0
         self.last_error = ""
@@ -415,12 +465,24 @@ class Speaker:
         self.set_muted(not self._muted)
         return self._muted
 
+    @property
+    def local_output(self) -> bool:
+        return self._local_output
+
+    def set_local_output(self, enabled: bool) -> bool:
+        """Choose whether speech is played here or handed to a remote client."""
+        self._local_output = bool(enabled)
+        if not self._local_output:
+            self.interrupt()
+        return self._local_output
+
     def status(self) -> Dict[str, Any]:
         return {
             "enabled": not self._muted,
             "engine": self.engine.name,
             "sink": self.sink.name,
             "available": self.available,
+            "local_output": self._local_output,
             "speaking": self.speaking,
             "queued": self._queue.qsize(),
             "spoken": self.spoken_count,
@@ -428,11 +490,66 @@ class Speaker:
             "last_error": self.last_error,
         }
 
+    def _already_synthesized(self, spoken: str) -> Optional[Path]:
+        cached = self._path_cache.get(spoken)
+        if cached is not None and Path(cached).exists():
+            return Path(cached)
+        return None
+
+    def _synthesize(self, spoken: str) -> Optional[Path]:
+        """Run the engine once per phrase, remembering the file it produced.
+
+        ``"__spoken__"`` is returned as-is for engines that speak directly
+        (pyttsx3) and leave no file behind - the caller knows what that means.
+        """
+        cached = self._already_synthesized(spoken)
+        if cached is not None:
+            return cached
+        try:
+            path = self.engine.synthesize(spoken, detect_language(spoken), self.cache_dir, self.settings)
+        except Exception as exc:  # noqa: BLE001
+            self.failures += 1
+            self.last_error = str(exc)
+            log.warning("TTS synthesis failed: %s", exc)
+            return None
+        if path is None:
+            return None
+        if str(path) == "__spoken__":
+            return path
+        self._path_cache[spoken] = Path(path)
+        return Path(path)
+
+    def synthesize_only(self, text: str) -> Optional[Path]:
+        """Synthesize without playing anything.
+
+        Used to hand the same neural voice to a browser client: the audio is
+        produced by the exact engine and cache the local speaker uses, but the
+        client is what plays it.  Returns ``None`` when the voice is muted or no
+        engine can produce audio.
+        """
+        spoken = clean_for_speech(text)
+        if not spoken or self._muted or isinstance(self.engine, NullEngine):
+            return None
+        path = self._synthesize(spoken)
+        if path is None or str(path) == "__spoken__":
+            # pyttsx3 speaks on the device and has no file a browser could play
+            return None
+        return Path(path)
+
+    def interrupt(self) -> None:
+        """Stop speaking now: drop what is queued and cut the current sound."""
+        self.clear_queue()
+        try:
+            self.sink.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        self._speaking.clear()
+
     # -- speaking ----------------------------------------------------------
     def speak(self, text: str, on_done: Optional[Callable[[], None]] = None) -> bool:
         """Queue text for speech.  Returns False when speech is impossible."""
         spoken = clean_for_speech(text)
-        if not spoken or self._muted or isinstance(self.engine, NullEngine):
+        if not spoken or self._muted or not self._local_output or isinstance(self.engine, NullEngine):
             if on_done:
                 try:
                     on_done()
@@ -483,17 +600,10 @@ class Speaker:
                     self._publish_state("idle")
 
     def _utter(self, text: str) -> bool:
-        language = detect_language(text)
-        try:
-            path = self.engine.synthesize(text, language, self.cache_dir, self.settings)
-        except Exception as exc:  # noqa: BLE001
-            self.failures += 1
-            self.last_error = str(exc)
-            log.warning("TTS synthesis failed: %s", exc)
-            return False
+        path = self._synthesize(text)
         if path is None:
             self.failures += 1
-            self.last_error = "synthesis produced no audio"
+            self.last_error = self.last_error or "synthesis produced no audio"
             return False
         if str(path) == "__spoken__":  # pyttsx3 already played it
             self.spoken_count += 1

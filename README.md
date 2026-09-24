@@ -159,10 +159,42 @@ token for the session; without it the API returns `401`.
 
 ![interface](https://img.shields.io/badge/theme-arc%20reactor-22d3ee)
 
-The interface shows live state (idle / listening / thinking / working / speaking),
-which provider answered, microphone and voice status, a tool activity feed, a
-memory panel with your stored facts, a system panel, and a log tail. Every JARVIS
-answer has its own **copy** button.
+The page at `/` **is** JARVIS - there is no marketing page anywhere in the app.
+An arc-reactor core shows what it is doing (idle / listening / thinking / working
+/ speaking), and the controls along the bottom of the chat are the whole
+interface:
+
+| Control | What it does |
+|---|---|
+| **Mic** | one spoken turn: press, speak, press again (it also stops by itself after a pause) |
+| **Live Talk** | hands-free conversation - it keeps listening and answering without you touching anything |
+| **Mic on/off** | mutes microphone input, here and on the Pi's own loop |
+| **Voice on/off** | mutes JARVIS's spoken replies, keeping the text |
+| **Stop** | cuts off the current sentence immediately |
+| **Clear** | empties the conversation (your remembered facts stay) |
+
+### How the voice actually works
+
+Both directions go through the backend, never through the browser's own speech
+APIs:
+
+- **JARVIS speaks with the configured engine** (Edge neural by default, Piper for
+  offline). `POST /api/speak` synthesizes the reply, caches it, and returns
+  `/media/voice/...`; the browser only plays that file. Closing the last tab
+  hands the audio back to the device's speakers, so JARVIS is not left silent at
+  the keyboard. Pick the target in the panel (*this browser* / *the device*).
+- **You speak, the Pi transcribes.** Push-to-talk uses the backend microphone
+  (`/api/listen`). When you are on a phone or laptop, the browser records raw PCM
+  and posts it to `/api/transcribe`, which runs the *same* recogniser
+  (Google / Whisper / Vosk / PocketSphinx) that would have used the Pi's mic, so
+  one engine selection covers both.
+- **Live Talk** loops record → transcribe → answer → speak, and pauses while
+  JARVIS is talking so it never transcribes its own voice. Microphone permission
+  is requested once, and a refusal is explained rather than retried in a loop.
+
+Setup and troubleshooting have their own page at [`/docs`](http://localhost:8765/docs)
+(same facts as `main.py --check`), linked from the header - the assistant itself
+stays an assistant.
 
 ---
 
@@ -466,7 +498,8 @@ Everything is optional and lives in `.env` (see [`env.example`](env.example)).
 | `EMAIL_ENABLED`, `SMTP_*`, `EMAIL_AUTO_SEND` | `false`, …, `false` | SMTP sending |
 | `TTS_ENABLED`, `TTS_ENGINE`, `TTS_VOICE_EN`, `TTS_VOICE_HI`, `TTS_RATE` | `true`, `edge`, … | speech output |
 | `STT_ENABLED`, `STT_ENGINE`, `STT_WAKE_WORD`, `VOSK_MODEL_PATH` | `false`, `google`, `jarvis` | speech input |
-| `JARVIS_WEB_HOST`, `JARVIS_WEB_PORT`, `JARVIS_WEB_TOKEN` | `0.0.0.0`, `8765`, – | web interface |
+| `JARVIS_WEB_HOST`, `JARVIS_WEB_PORT`, `JARVIS_WEB_TOKEN` | `0.0.0.0`, `8765`, – | web interface (`PORT` from the environment wins, for containers) |
+| `JARVIS_VOICE_OUTPUT` | `device` | where replies are spoken: `device`, `browser` or `off` |
 | `CONFIRM_DESTRUCTIVE`, `ALLOWED_APPS`, `ALLOWED_PATHS`, `TOOL_TIMEOUT` | `true`, … | safety limits |
 
 ---
@@ -474,7 +507,7 @@ Everything is optional and lives in `.env` (see [`env.example`](env.example)).
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests -q          # 201 tests
+.venv/bin/python -m pytest tests -q          # 224 tests
 .venv/bin/python -m pyflakes config core ai tools voice hardware gui server main.py   # clean
 npx --yes -p typescript tsc -b --noEmit      # type-checks the browser client
 ```
@@ -484,6 +517,12 @@ intent matching, expression safety, the file sandbox, the trash-based delete,
 reminders, migration of the old `ChatLog.json`, provider failover and cooldowns,
 plan validation, the confirmation flow, the GPIO tools and their spoken-name
 resolution, the "never fake a result" guarantee, and the HTTP/WebSocket API.
+
+The voice chain has its own tests (`tests/test_voice_api.py`,
+`tests/test_console_flow.py`) with stub speech engines, so they check the real
+routes and the real speaker without a microphone: browser audio routing, the
+mute controls, transcription, Live Talk's honest "no microphone" answer, and the
+full request sequence a browser session performs.
 
 `python main.py --check` is the manual equivalent for a real install - it is the
 first thing to run on the Pi.
@@ -630,12 +669,12 @@ JARVIS/
 ├── hardware/gpio.py         device declarations, mock + gpiozero backends,
 │                            and the GPIO tools (list · read · write · pulse)
 │
-├── server/app.py            FastAPI: REST, WebSocket, media, token auth
+├── server/app.py            FastAPI: REST, WebSocket, voice + media, /docs
 ├── gui/
 │   ├── web/                 the browser interface (plain HTML/CSS/JS)
 │   └── desktop.py           optional Tkinter window
 │
-├── tests/                   201 hermetic tests
+├── tests/                   224 hermetic tests
 ├── scripts/                 install.sh, run.sh
 ├── data/                    memory, chat log, notes, reminders, trash
 ├── assets/generated/        images JARVIS creates

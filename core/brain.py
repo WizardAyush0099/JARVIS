@@ -155,6 +155,19 @@ class Jarvis:
         self._enable_reminders = enable_reminders
         self._started = False
         self._turn = 0
+        self._mic_muted = False
+        #: where spoken replies come out - "browser" hands the audio to the web
+        #: client, "device" plays it here, "off" is silent.  A web request can
+        #: switch this; it is deliberately one shared setting, like a speaker.
+        chosen = str(getattr(getattr(settings, "tts", None), "voice_output", "device") or "device")
+        if chosen not in {"browser", "device", "off"}:
+            chosen = "device"
+        if not getattr(settings.tts, "enabled", True):
+            # TTS_ENABLED=false means silent, whatever the routing says
+            chosen = "off"
+        self._voice_output = chosen if self.speaker is not None else "off"
+        self._routing = self._voice_output if self._voice_output != "off" else "device"
+        self._apply_voice_output()
 
     # ------------------------------------------------------------------ #
     # lifecycle
@@ -484,6 +497,8 @@ class Jarvis:
 
     def listen_once(self, timeout: float = 6.0) -> Reply:
         """Push-to-talk used by the mic button in the GUI and web UI."""
+        if self._mic_muted:
+            return Reply(text="The microphone is muted. Unmute it and try again.", error=True)
         if self.listener is None:
             return Reply(text="Microphone support isn't installed on this machine.", error=True)
         self.events.set_state(STATE_LISTENING)
@@ -513,11 +528,122 @@ class Jarvis:
         self.events.publish("provider", message="Provider cooldowns cleared")
 
     def set_muted(self, muted: bool) -> bool:
+        """Mute or unmute JARVIS's voice (the "AI voice" button).
+
+        Un-muting restores wherever the voice was pointed before, so the toggle
+        and the routing control never contradict each other.
+        """
         if self.speaker is None:
             return bool(muted)
-        self.speaker.set_muted(bool(muted))
-        self.events.publish("speech", message="muted" if muted else "unmuted")
+        if muted:
+            if self._voice_output != "off":
+                self._routing = self._voice_output
+            self._voice_output = "off"
+        else:
+            self._voice_output = self._routing if self._routing in {"browser", "device"} else "device"
+        self._apply_voice_output()
+        self.events.publish("speech", message="muted" if muted else "unmuted", muted=bool(muted))
         return self.speaker.muted
+
+    # -- voice routing ------------------------------------------------------
+    @property
+    def voice_output(self) -> str:
+        return self._voice_output
+
+    @property
+    def voice_routing(self) -> str:
+        """Where the voice would go when it is not muted."""
+        return self._routing
+
+    def set_voice_output(self, mode: str) -> str:
+        """Choose where JARVIS's voice comes out: the browser, this device, or nowhere."""
+        wanted = str(mode or "").strip().lower()
+        if wanted not in {"browser", "device", "off"}:
+            raise ValueError("voice output must be 'browser', 'device' or 'off'")
+        if self.speaker is None and wanted != "off":
+            raise ValueError("speech output is not available on this machine")
+        if wanted != "off":
+            self._routing = wanted
+        self._voice_output = wanted
+        self._apply_voice_output()
+        self.events.publish("speech", message=f"voice on {wanted}", voice_output=wanted)
+        return self._voice_output
+
+    def _apply_voice_output(self) -> None:
+        """Make the speaker agree with the chosen output."""
+        speaker = self.speaker
+        if speaker is None:
+            return
+        # "browser" keeps the engine warm but silences the local sink; the audio
+        # is synthesized on demand and sent to the client instead.
+        speaker.set_local_output(self._voice_output == "device")
+        speaker.set_muted(self._voice_output == "off")
+
+    def synthesize_speech(self, text: str) -> Optional[Any]:
+        """Audio file for ``text`` produced by the configured TTS engine."""
+        if self.speaker is None or self._voice_output == "off":
+            return None
+        try:
+            return self.speaker.synthesize_only(text)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not synthesize speech: %s", exc)
+            return None
+
+    def interrupt(self) -> None:
+        """Stop speaking right now."""
+        self._pending = None
+        if self.speaker is not None:
+            self.speaker.interrupt()
+        if self.events.state == STATE_SPEAKING:
+            self.events.set_state(STATE_IDLE, note="stopped")
+        self.events.publish("speech", message="stopped")
+
+    # -- microphone ---------------------------------------------------------
+    @property
+    def mic_muted(self) -> bool:
+        return self._mic_muted
+
+    def set_mic_muted(self, muted: bool) -> bool:
+        """Mute or unmute microphone input (the "mic" control)."""
+        self._mic_muted = bool(muted)
+        listener = self.listener
+        if listener is not None:
+            if self._mic_muted or not listener.enabled:
+                listener.pause()
+            else:
+                listener.resume()
+        self.events.publish(
+            "mic", message="muted" if self._mic_muted else "unmuted", muted=self._mic_muted
+        )
+        return self._mic_muted
+
+    def listen_live(self, enabled: bool) -> Dict[str, Any]:
+        """Continuous conversation: keep the backend microphone loop running.
+
+        Returns the resulting status so the caller can report honestly when a
+        microphone is not installed rather than pretending to listen.
+        """
+        listener = self.listener
+        if listener is None:
+            return {"enabled": False, "running": False, "reason": "microphone support is not installed"}
+        if not listener.enabled:
+            return {
+                "enabled": False,
+                "running": False,
+                "reason": (
+                    "the microphone is disabled on this machine - set STT_ENABLED=true "
+                    "and install the voice requirements, or use the browser microphone"
+                ),
+            }
+        if enabled:
+            self.set_mic_muted(False)
+            listener.resume()
+            started = listener.start()
+            status = listener.status()
+            status["enabled"] = bool(started)
+            return status
+        listener.stop()
+        return listener.status()
 
     def status(self) -> Dict[str, Any]:
         return {
@@ -530,7 +656,13 @@ class Jarvis:
             "memory": self.memory.stats(),
             "facts": self.memory.facts(),
             "speech": self.speaker.status() if self.speaker else {"enabled": False, "engine": "none"},
-            "mic": self.listener.status() if self.listener else {"enabled": False, "engine": "none"},
+            "mic": (
+                {**self.listener.status(), "muted": self._mic_muted}
+                if self.listener
+                else {"enabled": False, "engine": "none", "muted": self._mic_muted}
+            ),
+            "voice_output": self._voice_output,
+            "voice_routing": self._routing,
             "hardware": self.hardware.status() if self.hardware else {"backend": "none", "devices": []},
             "pending": (
                 {"id": self._pending.id, "tool": self._pending.tool, "question": self._pending.question}

@@ -427,6 +427,11 @@ class TTSSettings:
     rate: int = -8
     volume: float = 0.9
     cache_dir: str = ""
+    #: where spoken replies come out:
+    #:   device  - this machine's speakers (CLI, desktop window)
+    #:   browser - the web client plays the audio the backend synthesized
+    #:   off     - never speak
+    voice_output: str = "device"
 
 
 @dataclass
@@ -580,6 +585,7 @@ class Settings:
                 voice_hi=env("TTS_VOICE_HI", "hi-IN-MadhurNeural"),
                 rate=env_int("TTS_RATE", -8),
                 volume=env_float("TTS_VOLUME", 0.9),
+                voice_output=env("JARVIS_VOICE_OUTPUT", "device").lower(),
             ),
             stt=STTSettings(
                 enabled=env_bool("STT_ENABLED", False),
@@ -592,7 +598,9 @@ class Settings:
             ),
             web=WebSettings(
                 host=env("JARVIS_WEB_HOST", "0.0.0.0"),
-                port=env_int("JARVIS_WEB_PORT", 8765),
+                # PORT is what an isolated container hands us; it wins over
+                # JARVIS_WEB_PORT so the same project works in a sandbox and at home
+                port=env_int("PORT", env_int("JARVIS_WEB_PORT", 8765)),
                 token=env("JARVIS_WEB_TOKEN"),
                 open_browser=env_bool("JARVIS_OPEN_BROWSER", True),
             ),

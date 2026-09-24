@@ -51,6 +51,18 @@ class STTEngine(ABC):
     @abstractmethod
     def listen_once(self, timeout: float = 6.0, phrase_time_limit: float = 8.0) -> Transcript: ...
 
+    def transcribe_audio(
+        self, pcm: bytes, sample_rate: int = 16000, sample_width: int = 2
+    ) -> Transcript:
+        """Recognise audio a *client* recorded and sent us.
+
+        The browser's microphone sits on the far side of the network, so the same
+        engine that drives the Pi's own microphone has to be able to recognise
+        bytes as well - otherwise a phone would need a second, different
+        recogniser to talk to JARVIS at all.
+        """
+        return Transcript(ok=False, error="this speech engine cannot transcribe uploaded audio")
+
     def calibrate(self, seconds: float = 1.0) -> bool:
         return False
 
@@ -60,6 +72,14 @@ class NullSTTEngine(STTEngine):
 
     def listen_once(self, timeout: float = 6.0, phrase_time_limit: float = 8.0) -> Transcript:
         return Transcript(ok=False, error="microphone support is not installed")
+
+    def transcribe_audio(
+        self, pcm: bytes, sample_rate: int = 16000, sample_width: int = 2
+    ) -> Transcript:
+        return Transcript(
+            ok=False,
+            error="no speech engine is installed (pip install -r requirements-voice.txt)",
+        )
 
 
 class SpeechRecognitionEngine(STTEngine):
@@ -120,6 +140,26 @@ class SpeechRecognitionEngine(STTEngine):
         except Exception as exc:  # noqa: BLE001
             return Transcript(ok=False, error=f"could not capture audio: {exc}")
 
+        return self._recognize(audio)
+
+    def transcribe_audio(
+        self, pcm: bytes, sample_rate: int = 16000, sample_width: int = 2
+    ) -> Transcript:
+        if not self.available():
+            return Transcript(ok=False, error=f"speech recognition is unavailable ({self._error})")
+        import speech_recognition as sr  # type: ignore
+
+        if not pcm:
+            return Transcript(ok=False, error="no audio was uploaded")
+        try:
+            audio = sr.AudioData(pcm, int(sample_rate) or 16000, int(sample_width) or 2)
+        except Exception as exc:  # noqa: BLE001
+            return Transcript(ok=False, error=f"unusable audio: {exc}")
+        try:
+            # the cloud recognisers are happiest with 16 kHz mono PCM
+            audio = audio.get_raw_data(convert_rate=16000, convert_width=2)
+        except Exception:  # noqa: BLE001 - audioop missing: send it as recorded
+            pass
         return self._recognize(audio)
 
     def _recognize(self, audio: Any) -> Transcript:
@@ -253,6 +293,28 @@ class VoskEngine(STTEngine):
             return Transcript(ok=False, error="no speech detected")
         return Transcript(text=collected, ok=True, confidence=0.7)
 
+    def transcribe_audio(
+        self, pcm: bytes, sample_rate: int = 16000, sample_width: int = 2
+    ) -> Transcript:
+        if not self.available():
+            return Transcript(ok=False, error=f"Vosk is unavailable ({self._error})")
+        if not pcm:
+            return Transcript(ok=False, error="no audio was uploaded")
+        try:
+            import vosk  # type: ignore
+        except Exception as exc:  # noqa: BLE001
+            return Transcript(ok=False, error=f"Vosk needs pyaudio: {exc}")
+        try:
+            recognizer = vosk.KaldiRecognizer(self._model, int(sample_rate) or 16000)
+            recognizer.AcceptWaveform(pcm)
+            payload = self._json.loads(recognizer.FinalResult())
+        except Exception as exc:  # noqa: BLE001
+            return Transcript(ok=False, error=f"Vosk recognition failed: {exc}")
+        collected = (payload.get("text") or "").strip()
+        if not collected:
+            return Transcript(ok=False, error="I couldn't make out what you said")
+        return Transcript(text=collected, ok=True, confidence=0.7)
+
 
 def build_engine(settings: Any) -> STTEngine:
     name = str(getattr(settings.stt, "engine", "google") or "google").lower()
@@ -364,6 +426,17 @@ class Listener:
         else:
             self.last_error = transcript.error
         self._publish("idle")
+        return transcript
+
+    def transcribe_audio(
+        self, pcm: bytes, sample_rate: int = 16000, sample_width: int = 2
+    ) -> Transcript:
+        """Recognise uploaded audio with whichever engine this listener uses."""
+        transcript = self.engine.transcribe_audio(pcm, sample_rate, sample_width)
+        if transcript.ok:
+            self.heard_count += 1
+        else:
+            self.last_error = transcript.error
         return transcript
 
     def _run(self) -> None:
