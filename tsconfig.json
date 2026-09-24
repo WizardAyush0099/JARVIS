@@ -1,0 +1,24 @@
+{
+  "//": [
+    "JARVIS is a Python project: there is no TypeScript source and no build step.",
+    "The browser UI in gui/web/ is deliberate plain JavaScript so a Raspberry Pi",
+    "needs no Node.js toolchain. This config exists so that JavaScript gets",
+    "type-checked instead of going unchecked - `npx -p typescript tsc -b` validates",
+    "gui/web/app.js",
+    "against the DOM types and reports real mistakes (typos, bad calls) as errors."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["gui/web/*.js"]
+}

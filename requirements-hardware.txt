@@ -1,0 +1,14 @@
+# ---------------------------------------------------------------------------
+# JARVIS - hardware requirements (optional)
+#
+#   pip install -r requirements-hardware.txt
+#
+# `gpiozero` ships with Raspberry Pi OS, so this is usually already satisfied.
+# On a desktop or laptop, install nothing: the hardware layer detects the absence
+# of GPIO and runs on its mock backend, and every hardware tool still responds
+# (clearly reporting that the value is simulated).
+# ---------------------------------------------------------------------------
+
+gpiozero>=2.0                        # LEDs, buttons, relays, servos, sensors
+lgpio>=0.2.2                         # GPIO backend used by gpiozero on Pi 5 / Bookworm
+w1thermsensor>=2.0                   # DS18B20 1-Wire temperature sensors (optional)

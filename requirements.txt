@@ -1,0 +1,27 @@
+# ---------------------------------------------------------------------------
+# JARVIS - core requirements
+#
+# These are everything needed for the assistant itself: the brain, the tools and
+# the browser interface. All of them have ARM64 wheels, so `pip install` needs no
+# compiler on Raspberry Pi OS.
+#
+#   pip install -r requirements.txt                 # core (this file)
+#   pip install -r requirements-voice.txt           # speech in/out
+#   pip install -r requirements-hardware.txt        # GPIO and sensors
+#   pip install -r requirements-dev.txt             # tests and linting
+#
+# or simply:  sh scripts/install.sh --voice --hardware
+# ---------------------------------------------------------------------------
+
+# --- web interface ---------------------------------------------------------
+fastapi>=0.110,<1.0
+uvicorn>=0.27,<1.0
+
+# --- configuration ---------------------------------------------------------
+python-dotenv>=1.0
+
+# --- system metrics, temperature, battery, processes -----------------------
+psutil>=5.9
+
+# --- optional extras used by tools (safe to remove) ------------------------
+pypdf>=4.0                # reading PDFs with the read_pdf tool

@@ -1,0 +1,68 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "JARVIS: install (core + dev)",
+      "type": "shell",
+      "command": "sh scripts/install.sh --dev",
+      "problemMatcher": []
+    },
+    {
+      "label": "JARVIS: install (with voice)",
+      "type": "shell",
+      "command": "sh scripts/install.sh --dev --voice",
+      "problemMatcher": []
+    },
+    {
+      "label": "JARVIS: install (everything)",
+      "type": "shell",
+      "command": "sh scripts/install.sh --dev --voice --hardware",
+      "problemMatcher": []
+    },
+    {
+      "label": "JARVIS: doctor",
+      "type": "shell",
+      "command": ".venv/bin/python main.py --check || python3 main.py --check",
+      "problemMatcher": []
+    },
+    {
+      "label": "JARVIS: run web interface",
+      "type": "shell",
+      "command": ".venv/bin/python main.py --web || python3 main.py --web",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "JARVIS: run desktop window",
+      "type": "shell",
+      "command": ".venv/bin/python main.py --gui || python3 main.py --gui",
+      "problemMatcher": []
+    },
+    {
+      "label": "JARVIS: tests",
+      "type": "shell",
+      "command": ".venv/bin/python -m pytest tests -q || python3 -m pytest tests -q",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "JARVIS: lint (pyflakes)",
+      "type": "shell",
+      "command": ".venv/bin/python -m pyflakes config core ai tools voice hardware gui server main.py || python3 -m pyflakes config core ai tools voice hardware gui server main.py",
+      "problemMatcher": []
+    },
+    {
+      "label": "JARVIS: typecheck browser client",
+      "type": "shell",
+      "command": "npx --yes -p typescript tsc -b --noEmit",
+      "problemMatcher": []
+    }
+  ]
+}

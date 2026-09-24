@@ -1,0 +1,34 @@
+# ---------------------------------------------------------------------------
+# JARVIS - voice requirements (optional)
+#
+# Install with:  pip install -r requirements-voice.txt
+# On Raspberry Pi OS, PyAudio needs the PortAudio headers first:
+#
+#   sudo apt update && sudo apt install -y portaudio19-dev python3-pyaudio \
+#        flac mpg123 espeak-ng
+#
+# Notes for Raspberry Pi 4
+# -----------------------
+# * `edge-tts` gives the most natural, "JARVIS-like" voice and needs internet
+#   only at synthesis time. It is the default.
+# * `vosk` gives fully offline speech recognition at roughly 60 MB of RAM with
+#   the small model - the best choice when the Pi has no internet.
+# * `pygame` is the most reliable audio sink; the code also falls back to
+#   aplay/paplay/mpg123/ffplay from the command line if it is not installed.
+# * `pyttsx3` and `espeak-ng` are offline fallbacks with robotic voices.
+# ---------------------------------------------------------------------------
+
+# --- speech to text --------------------------------------------------------
+SpeechRecognition>=3.10
+PyAudio>=0.2.14                      # microphone capture (needs portaudio19-dev)
+vosk>=0.3.45                         # optional: fully offline recognition
+
+# --- text to speech --------------------------------------------------------
+edge-tts>=6.1                        # natural neural voices (free, needs internet)
+pyttsx3>=2.90                        # offline fallback voice
+pygame>=2.5                          # audio playback
+
+# Offline neural voice (best quality-per-watt on a Pi 4).
+# Not a pip package: install the binary and a voice model instead:
+#   sudo apt install -y piper-tts      # or build from https://github.com/rhasspy/piper
+#   then set PIPER_MODEL=/path/to/en_GB-alan-medium.onnx in .env

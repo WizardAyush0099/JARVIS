@@ -1,0 +1,46 @@
+# --- secrets -------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# --- python --------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+
+# --- tooling -------------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+node_modules/
+*.tsbuildinfo
+
+# --- runtime data (keep the folders, ignore the content) -----------------
+data/memory.json
+data/ChatLog.json
+data/ChatLog.*.json
+data/reminders.json
+data/notes.json
+data/trash/
+assets/generated/*
+!assets/generated/.gitkeep
+assets/voice_cache/*
+!assets/voice_cache/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# --- os / editor ---------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp

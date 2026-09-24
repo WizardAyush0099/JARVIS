@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#04070d" />
+<meta name="description" content="JARVIS - a personal AI assistant running on a Raspberry Pi 4." />
+<title>JARVIS</title>
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body data-state="boot">
+
+<div id="offline-banner" class="banner hidden" role="status">
+  <strong>Backend offline.</strong>
+  <span>This page is served but it cannot reach the JARVIS brain. Start it with
+  <code>python main.py --web</code>, then reload.</span>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="reactor" aria-hidden="true">
+      <span class="reactor-core"></span>
+      <span class="reactor-ring"></span>
+      <span class="reactor-glow"></span>
+    </div>
+    <div class="brand-text">
+      <h1>JARVIS</h1>
+      <p id="brand-sub">personal ai &middot; raspberry pi 4</p>
+    </div>
+  </div>
+
+  <div class="pills" id="pills">
+    <span class="pill" id="pill-state" data-tone="idle"><i></i><span>idle</span></span>
+    <span class="pill" id="pill-brain" data-tone="muted"><i></i><span>brain</span></span>
+    <span class="pill" id="pill-mic" data-tone="muted"><i></i><span>mic</span></span>
+    <span class="pill" id="pill-voice" data-tone="muted"><i></i><span>voice</span></span>
+  </div>
+
+  <div class="topbar-actions">
+    <button class="icon-btn" id="btn-panel" title="Status panel" aria-label="Status panel">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="chat" aria-live="polite">
+    <div class="thread" id="thread">
+      <article class="msg intro">
+        <div class="msg-body">
+          <p><strong id="intro-name">JARVIS</strong> is online.</p>
+          <p class="muted">Ask me anything, or try one of these:</p>
+          <div class="suggestions" id="suggestions">
+            <button class="chip" data-fill="system status">system status</button>
+            <button class="chip" data-fill="list my hardware devices">my devices</button>
+            <button class="chip" data-fill="what time is it">what time is it</button>
+            <button class="chip" data-fill="search for Raspberry Pi 5 news">search the web</button>
+            <button class="chip" data-fill="generate an image of a futuristic city at night">generate an image</button>
+            <button class="chip" data-fill="remember my project is called Athena">remember something</button>
+            <button class="chip" data-fill="what can you do">what can you do</button>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <div id="confirmation" class="confirm hidden" role="alertdialog" aria-labelledby="confirm-text">
+      <div class="confirm-icon" aria-hidden="true">!</div>
+      <div class="confirm-text">
+        <p id="confirm-text">Confirm this action?</p>
+        <p class="muted small" id="confirm-meta"></p>
+      </div>
+      <div class="confirm-actions">
+        <button class="btn danger" id="btn-confirm-no">No, cancel</button>
+        <button class="btn primary" id="btn-confirm-yes">Yes, do it</button>
+      </div>
+    </div>
+
+    <form class="composer" id="composer" autocomplete="off">
+      <button type="button" class="composer-btn" id="btn-mic" title="Push to talk" aria-label="Push to talk">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3Zm7 9a7 7 0 0 1-6 6.93V22h-2v-3.07A7 7 0 0 1 5 12h2a5 5 0 0 0 10 0Z"/></svg>
+      </button>
+      <textarea id="input" rows="1" placeholder="Talk to JARVIS..." aria-label="Message JARVIS"></textarea>
+      <button type="button" class="composer-btn" id="btn-mute" title="Mute voice" aria-label="Mute voice">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Zm12.5 3a4.5 4.5 0 0 0-2-3.74v7.48A4.5 4.5 0 0 0 16.5 12Z"/></svg>
+      </button>
+      <button type="submit" class="composer-btn send" id="btn-send" title="Send" aria-label="Send">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 21 3l-8.5 18-2.2-7.3L3 11.5Z"/></svg>
+      </button>
+    </form>
+    <p class="hint muted small">Enter sends &middot; Shift+Enter for a new line &middot; tools that touch your system ask first</p>
+  </section>
+
+  <aside class="panel" id="panel" aria-label="Status">
+    <div class="panel-head">
+      <h2>Status</h2>
+      <button class="icon-btn" id="btn-panel-close" aria-label="Close panel">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div class="panel-body">
+      <section class="block">
+        <h3>Brain</h3>
+        <ul class="list" id="provider-list"></ul>
+        <button class="btn ghost small" id="btn-reset-providers">reset provider cooldowns</button>
+      </section>
+
+      <section class="block">
+        <h3>Memory</h3>
+        <div class="stats" id="memory-stats"></div>
+        <ul class="list facts" id="fact-list"></ul>
+        <button class="btn ghost small" id="btn-clear">clear conversation</button>
+      </section>
+
+      <section class="block">
+        <h3>Machine</h3>
+        <div class="stats" id="system-stats"></div>
+      </section>
+
+      <section class="block">
+        <h3>Hardware</h3>
+        <div class="stats" id="hardware-stats"></div>
+        <ul class="list" id="device-list"></ul>
+      </section>
+
+      <section class="block">
+        <h3>Recent tool activity</h3>
+        <ul class="list tools" id="tool-log"></ul>
+      </section>
+
+      <section class="block">
+        <h3>Log</h3>
+        <ul class="list logs" id="log-list"></ul>
+      </section>
+    </div>
+  </aside>
+</main>
+
+<div class="scrim" id="scrim"></div>
+
+<script src="/static/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "Declare your Raspberry Pi hardware here. JARVIS addresses every device by",
+    "its 'id', so wiring stays out of the AI code entirely.",
+    "Supported kinds: led, button, relay, buzzer, servo, sensor (temperature via",
+    "a DS18B20, distance, light, motion).",
+    "backend: 'auto' uses gpiozero when it is present, otherwise a mock backend",
+    "that keeps every hardware tool working with simulated values."
+  ],
+  "backend": "auto",
+  "devices": [
+    {
+      "id": "status_led",
+      "name": "Status LED",
+      "kind": "led",
+      "pin": 17,
+      "active_high": true
+    },
+    {
+      "id": "button",
+      "name": "Push button",
+      "kind": "button",
+      "pin": 27,
+      "pull_up": true,
+      "bounce_time": 0.1
+    }
+  ]
+}
