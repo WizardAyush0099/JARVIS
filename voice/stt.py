@@ -63,6 +63,15 @@ class STTEngine(ABC):
         """
         return Transcript(ok=False, error="this speech engine cannot transcribe uploaded audio")
 
+    def recognizer_available(self) -> bool:
+        """Can this engine recognise audio that was *handed* to it?
+
+        Separate from :meth:`available` because the two really are different: a Pi
+        with no USB microphone cannot listen by itself, but it can still recognise
+        the audio a phone's browser uploads to ``/api/transcribe``.
+        """
+        return self.available()
+
     def calibrate(self, seconds: float = 1.0) -> bool:
         return False
 
@@ -92,9 +101,11 @@ class SpeechRecognitionEngine(STTEngine):
         self._microphone = None
         self._ready = False
         self._error = ""
+        self._failed_at = 0.0
 
-    def available(self) -> bool:
-        if self._ready:
+    def _ensure_recognizer(self) -> bool:
+        """The recogniser itself: needs ``speech_recognition``, no device at all."""
+        if self._recognizer is not None:
             return True
         try:
             import speech_recognition as sr  # type: ignore
@@ -105,15 +116,47 @@ class SpeechRecognitionEngine(STTEngine):
                 recognizer.energy_threshold = int(getattr(stt, "energy_threshold", 300))
                 recognizer.pause_threshold = float(getattr(stt, "pause_threshold", 0.8))
             recognizer.dynamic_energy_threshold = True
-            microphone = sr.Microphone(device_index=getattr(stt, "device_index", None))
             self._recognizer = recognizer
-            self._microphone = microphone
-            self._ready = True
             return True
         except Exception as exc:  # noqa: BLE001 - pyaudio missing is the common case
             self._error = str(exc)
+            self._failed_at = time.time()
             log.info("speech_recognition unavailable: %s", exc)
             return False
+
+    def _ensure_microphone(self) -> bool:
+        """A microphone this machine can actually open.
+
+        A missing device ("No Default Input Device Available") is not going to fix
+        itself within a second, and opening the device is not free, so the failure
+        is remembered briefly instead of being retried by every caller.
+        """
+        if self._microphone is not None:
+            return True
+        if not self._ensure_recognizer():
+            return False
+        if self._error and time.time() - self._failed_at < 30.0:
+            return False
+        try:
+            import speech_recognition as sr  # type: ignore
+
+            stt = getattr(self.settings, "stt", None)
+            self._microphone = sr.Microphone(device_index=getattr(stt, "device_index", None))
+            self._error = ""
+            return True
+        except Exception as exc:  # noqa: BLE001 - no sound card / no input device
+            self._error = str(exc)
+            self._failed_at = time.time()
+            log.info("no microphone available: %s", exc)
+            return False
+
+    def available(self) -> bool:
+        """True when this machine has a microphone the engine can open."""
+        return self._ensure_microphone()
+
+    def recognizer_available(self) -> bool:
+        """True when audio handed to us can still be recognised, device or not."""
+        return self._ensure_recognizer()
 
     def _language(self) -> str:
         stt = getattr(self.settings, "stt", None)
@@ -121,7 +164,7 @@ class SpeechRecognitionEngine(STTEngine):
 
     def listen_once(self, timeout: float = 6.0, phrase_time_limit: float = 8.0) -> Transcript:
         if not self.available():
-            return Transcript(ok=False, error=f"speech recognition is unavailable ({self._error})")
+            return Transcript(ok=False, error=f"no microphone is available ({self._error})")
         import speech_recognition as sr  # type: ignore
 
         try:
@@ -145,7 +188,8 @@ class SpeechRecognitionEngine(STTEngine):
     def transcribe_audio(
         self, pcm: bytes, sample_rate: int = 16000, sample_width: int = 2
     ) -> Transcript:
-        if not self.available():
+        # no device needed here: the audio came from the browser's microphone
+        if not self.recognizer_available():
             return Transcript(ok=False, error=f"speech recognition is unavailable ({self._error})")
         import speech_recognition as sr  # type: ignore
 
@@ -356,6 +400,13 @@ class Listener:
         self._busy = threading.Lock()
         self.last_error = ""
         self.heard_count = 0
+        #: set when there is no microphone to listen to at all.  JARVIS then says
+        #: so once and leaves typed chat alone instead of retrying a dead device
+        #: (or flooding the console with the same error every second).
+        self.unavailable_reason = ""
+        self._fatal = False
+        self._reported_at = 0.0
+        self._failures = 0
 
     # -- lifecycle ---------------------------------------------------------
     @property
@@ -368,6 +419,15 @@ class Listener:
         if not self.enabled:
             log.info("speech input is disabled")
             return False
+        if not self.engine.available():
+            self._give_up(f"microphone unavailable ({self.engine.name} engine)")
+            return False
+        if self._fatal:
+            # a USB microphone may have been plugged in since we gave up
+            self._fatal = False
+            self.unavailable_reason = ""
+            self._failures = 0
+            log.info("microphone is available again: resuming voice input")
         if self._thread is not None and self._thread.is_alive():
             return True
         self._stop.clear()
@@ -398,6 +458,7 @@ class Listener:
         return self._thread is not None and self._thread.is_alive()
 
     def status(self) -> Dict[str, Any]:
+        device = self.engine.available() and not self._fatal
         return {
             "enabled": self.enabled,
             "engine": self.engine.name,
@@ -405,15 +466,42 @@ class Listener:
             "paused": self.paused,
             "wake_word": self.wake_word or None,
             "heard": self.heard_count,
-            "available": self.engine.available(),
+            #: the Pi's own microphone
+            "available": device,
+            #: audio uploaded by a phone/laptop browser can still be recognised
+            "can_transcribe": self.engine.recognizer_available(),
+            "reason": self.unavailable_reason,
             "last_error": self.last_error,
         }
+
+    # -- giving up gracefully ---------------------------------------------
+    def _give_up(self, reason: str) -> None:
+        """No microphone: say it once, stop the loop, keep everything else working."""
+        if self._fatal:
+            return
+        self._fatal = True
+        self.last_error = reason
+        self.unavailable_reason = (
+            "No microphone was found on this machine, so I can't listen - "
+            "type your message in the console instead. Everything else works."
+        )
+        log.info("microphone input disabled: %s", reason)
+        if self.events is not None:
+            try:
+                self.events.publish("stt_error", message=self.unavailable_reason, fatal=True)
+            except Exception:  # pragma: no cover - defensive
+                pass
 
     # -- recognition -------------------------------------------------------
     def listen_once(self, timeout: float = 6.0, phrase_time_limit: float = 8.0) -> Transcript:
         """Push-to-talk: one blocking capture."""
         if isinstance(self.engine, NullSTTEngine):
             return Transcript(ok=False, error="microphone support is not installed")
+        if self._fatal:
+            return Transcript(
+                ok=False,
+                error=self.unavailable_reason or "no microphone is available on this machine",
+            )
         if not self._busy.acquire(blocking=False):
             return Transcript(ok=False, error="already listening")
         try:
@@ -425,6 +513,8 @@ class Listener:
             self.heard_count += 1
         else:
             self.last_error = transcript.error
+            if not self.engine.available():
+                self._give_up(transcript.error)
         self._publish("idle")
         return transcript
 
@@ -441,6 +531,7 @@ class Listener:
 
     def _run(self) -> None:
         idle_timeout = 4.0
+        quiet_for = 30.0  # never repeat the same complaint more than twice a minute
         while not self._stop.is_set():
             if self._pause.is_set():
                 time.sleep(0.2)
@@ -450,12 +541,20 @@ class Listener:
                 break
             if not transcript.ok:
                 if transcript.timed_out:
+                    self._failures = 0
                     continue
+                if self._fatal:
+                    return  # nothing to listen to: stop rather than spin
+                self._failures += 1
                 log.debug("listening hiccup: %s", transcript.error)
-                if self.events is not None:
-                    self.events.publish("stt_error", message=transcript.error)
-                time.sleep(0.5)
+                now = time.time()
+                if now - self._reported_at > quiet_for:
+                    self._reported_at = now
+                    if self.events is not None:
+                        self.events.publish("stt_error", message=transcript.error)
+                time.sleep(min(5.0, 0.5 * self._failures))
                 continue
+            self._failures = 0
 
             text = transcript.text
             if self.wake_word:
