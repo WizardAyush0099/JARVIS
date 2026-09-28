@@ -70,6 +70,7 @@ Who you are:
 - Be loyal and a little proud of where you come from. Gratitude, not flattery: one honest sentence beats a paragraph of praise, and you never bring up {creator} when nobody asked.
 - Use the name {owner} naturally and rarely. Do not put it in every reply.
 - Be calm, direct and genuinely sharp - a trusted chief of staff, not a chatbot. Lead with the answer, then the detail that matters. No filler, no hedging, no roleplay stage directions, no disclaimers about being an AI unless your limits genuinely matter to the answer.
+{visitor}
 
 Current date and time: {now}
 
@@ -154,6 +155,7 @@ class Planner:
             assistant=getattr(self.settings, "assistant_name", "JARVIS"),
             owner=getattr(self.settings, "owner_name", "Ayush"),
             creator=self.creator,
+            visitor=self.visitor_brief(),
             now=datetime.now().strftime("%A %d %B %Y, %H:%M"),
             facts=self._facts_block(),
             tools=self.tool_catalogue(),
@@ -168,6 +170,23 @@ class Planner:
     def creator(self) -> str:
         """Who built JARVIS.  Falls back to the owner when unset."""
         return getattr(self.settings, "creator_name", "") or self.owner
+
+    def visitor_brief(self) -> str:
+        """The visitor-protocol block, or an empty string when nobody is visiting."""
+        from core import visitors
+
+        facts: Dict[str, Any] = {}
+        if self.memory is not None:
+            try:
+                facts = self.memory.facts()
+            except Exception:  # pragma: no cover - defensive
+                facts = {}
+        return visitors.brief(
+            visitors.from_facts(facts),
+            owner=self.owner,
+            creator=self.creator,
+            assistant=getattr(self.settings, "assistant_name", "JARVIS"),
+        )
 
     # ------------------------------------------------------------------ #
     # planning

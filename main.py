@@ -168,6 +168,12 @@ def run_doctor(settings: Any) -> int:
     print(f"  email         : {'configured' if settings.email.configured else 'not configured'}")
     print(f"  voice output  : {'enabled' if settings.tts.enabled else 'disabled'} (engine: {settings.tts.engine})")
     print(f"  voice input   : {'enabled' if settings.stt.enabled else 'disabled'} (engine: {settings.stt.engine})")
+    print('  visitors      : ready (say "the chief minister is here")')
+    print("  text chat     : always available (a microphone is never required)")
+    if not settings.stt.enabled:
+        print(
+            "                  no microphone needed - type every message; voice input is a bonus"
+        )
     print(f"  web interface : http://{settings.web.host}:{settings.web.port}"
           f"{' (token required)' if settings.web.token else ''}")
 

@@ -20,6 +20,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from core import visitors
+
 # --------------------------------------------------------------------------- #
 # model
 # --------------------------------------------------------------------------- #
@@ -173,6 +175,45 @@ def _rule_identity(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
                 "manage files and talk to you."
             ),
             reason="identity",
+        )
+    return None
+
+
+def _rule_visitor(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
+    """Visitor protocol: a dignitary is announced, leaves, or is asked about.
+
+    Deliberately deterministic: the moment a Chief Minister walks into the room
+    is not the moment to depend on an API key or on the model's mood.  Asking
+    "who is the guest" comes first, so a question is never read as an arrival.
+    """
+    if visitors.is_status_question(text):
+        return Intent(
+            "visitor_status",
+            tool="visitor_status",
+            category="identity",
+            reason="visitor status",
+        )
+    if visitors.is_departure(text):
+        return Intent(
+            "visitor_departure",
+            tool="visitor_departure",
+            category="identity",
+            reason="visitor left",
+        )
+    guest = visitors.parse(text)
+    if guest is not None:
+        return Intent(
+            "visitor_arrival",
+            tool="announce_visitor",
+            args={
+                "guest": guest.raw or text,
+                "title": guest.title,
+                "name": guest.name,
+                "place": guest.place,
+            },
+            category="identity",
+            confidence=0.95,
+            reason="visitor protocol",
         )
     return None
 
@@ -708,6 +749,7 @@ def _rule_power(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
 RULE_FUNCTIONS: Sequence[Callable[[str, Dict[str, Any]], Optional[Intent]]] = (
     _rule_greeting,
     _rule_identity,
+    _rule_visitor,
     _rule_capabilities,
     _rule_time,
     _rule_date,

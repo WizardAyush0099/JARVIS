@@ -257,6 +257,43 @@ def _uptime() -> Optional[str]:
         return None
 
 
+def machine_metrics() -> Dict[str, Any]:
+    """Every gauge the console shows, in one dict.
+
+    Split out from :func:`system_status` so the web console can sample the
+    machine on a background thread without composing a sentence for the user.
+    Anything this machine cannot measure comes back as ``None`` - the console
+    then shows a dash rather than a made-up number.
+    """
+    uname = platform.uname()
+    model = None
+    try:
+        with open("/proc/device-tree/model", "rb") as handle:
+            model = handle.read().decode("utf-8", "replace").strip("\x00")
+    except OSError:
+        model = None
+    load = None
+    try:
+        load = round(os.getloadavg()[0], 2)
+    except Exception:
+        pass
+    return {
+        "cpu_percent": _cpu_percent(),
+        "cpu_count": os.cpu_count(),
+        "load": load,
+        "memory": _memory(),
+        "disk": _disk(),
+        "temperature_c": _temperature(),
+        "battery": _battery(),
+        "uptime": _uptime(),
+        "host": uname.node,
+        "platform": f"{platform.system()} {platform.release()}",
+        "board": model,
+        "is_pi": is_raspberry_pi(),
+        "psutil": HAVE_PSUTIL,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # tools
 # --------------------------------------------------------------------------- #
@@ -700,4 +737,4 @@ def system_overview() -> ToolResult:
     return ToolResult.success("\n".join(lines), data={"uname": list(uname)})
 
 
-__all__ = ["HAVE_PSUTIL", "is_raspberry_pi"]
+__all__ = ["HAVE_PSUTIL", "is_raspberry_pi", "machine_metrics"]

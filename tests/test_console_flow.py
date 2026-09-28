@@ -66,6 +66,39 @@ def test_a_whole_browser_session(settings, events):
         assert client.post("/api/stop").json()["ok"] is True
 
 
+def test_the_hud_page_and_its_hooks_are_served(settings, events):
+    """The console ships as the HUD it is: every hook the client wires up."""
+    jarvis = make_jarvis(settings, events)
+
+    with TestClient(create_app(settings, jarvis)) as client:
+        page = client.get("/")
+        assert page.status_code == 200
+        html = page.text
+        for marker in (
+            'id="boot"',            # the boot sequence
+            'id="reactor"',         # the arc-reactor core
+            'id="core-mode"',
+            'id="clock"', 'id="day"', 'id="mission"',
+            'id="visitor"',         # visitor-protocol banner
+            'id="gauge-cpu"', 'id="gauge-ram"', 'id="gauge-temp"', 'id="gauge-disk"',
+            'id="feed"',            # live activity feed
+            'data-goto="block-memory"',
+            'id="orb"', 'id="thread"', 'id="composer"', 'id="console-bar"',
+            'id="btn-mic"', 'id="btn-live"', 'id="btn-mic-mute"', 'id="btn-voice-mute"',
+            'id="btn-stop"', 'id="btn-clear"', 'id="level"', 'id="state-label"',
+        ):
+            assert marker in html, marker
+
+        # the skin and the client are served from the same origin, no CDN
+        for path in ("/static/styles.css", "/static/app.js"):
+            assert client.get(path).status_code == 200
+
+        # telemetry the HUD draws from is part of the state payload
+        state = client.get("/api/state").json()
+        assert "machine" in state["status"]
+        assert "visitor" in state["status"]
+
+
 def test_a_voice_turn_reaches_the_browser_over_the_socket(settings, events):
     """Live Talk from the device microphone must show up in the open page."""
     settings.tts.enabled = True

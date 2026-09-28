@@ -615,6 +615,12 @@ def render_docs_page(settings: Optional[Settings] = None) -> str:
   <li><code>.venv/bin/python main.py --check</code> - reports what is still missing</li>
   <li><code>.venv/bin/python main.py</code> - open the printed LAN address from your phone</li>
 </ol>
+<h2>Visitor protocol</h2>
+<p>When someone important is shown the project, say who they are -
+<code>the chief minister of himachal pradesh is here</code> - and JARVIS introduces
+itself, addresses them by their office, keeps your private matters private, and says
+out loud that its creator comes first. <code>the guest has left</code> stands it down.
+The wording comes from <code>core/visitors.py</code> and needs no API key.</p>
 <h2>Voice notes</h2>
 <ul>
   <li><b>JARVIS voice</b> is synthesized by the backend and played by whichever output you pick -
@@ -622,6 +628,11 @@ def render_docs_page(settings: Optional[Settings] = None) -> str:
   <li><b>Microphone</b> input uses the installed STT engine. The Pi's own microphone is used by
       Live Talk; a phone records and sends the audio to the same engine over <code>/api/transcribe</code>.</li>
   <li>Neither needs a key beyond what the recogniser itself needs (Google needs internet, Vosk does not).</li>
+  <li><b>No microphone, or no speech engine?</b> Nothing else is affected. Type every message
+      in the composer - chat, tools, memory, the visitor protocol and JARVIS's spoken replies
+      all work without one, and the console says so instead of offering a microphone it cannot
+      use. A Pi with no device can still recognise audio a phone's browser sends to
+      <code>/api/transcribe</code>.</li>
 </ul>
 <h2>Full documentation</h2>
 <p>See <code>README.md</code> in the project, and <code>JARVIS_UPGRADE_PROMPT.md</code> for the
