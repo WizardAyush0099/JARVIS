@@ -34,6 +34,8 @@ from core.logging_setup import get_logger
 from core.memory import Memory
 from core.planner import Plan, PlanStep, Planner
 from core.router import PendingAction, ToolRouter, classify_reply
+from core.telemetry import Telemetry
+from core import visitors
 from tools.base import ToolContext, ToolResult
 from tools.utilities import ReminderScheduler
 from voice.stt import Listener
@@ -50,6 +52,7 @@ person you exist to serve.
 
 You are writing the final reply for {owner}. You have just run tools; their real
 results are below and you must answer from them.
+{visitor}
 
 Rules:
 - Never claim something succeeded if its result says FAILED. Report the failure plainly and, if it is fixable, say what to change.
@@ -116,6 +119,8 @@ class Jarvis:
         self.memory = Memory(settings, self.events)
         self.offline = OfflineEngine(settings, self.memory, self.events)
         self.ai = ProviderManager(settings, self.events, offline_engine=self.offline)
+        #: CPU / memory / temperature gauges for the console, sampled off-thread
+        self.telemetry = Telemetry()
 
         if hardware is None:
             try:
@@ -182,6 +187,7 @@ class Jarvis:
         if self._started:
             return
         self._started = True
+        self.telemetry.start()
         if self._enable_reminders:
             self.reminders.start()
         if self.speaker is not None:
@@ -192,6 +198,8 @@ class Jarvis:
 
     def stop(self) -> None:
         self._stopped = True
+        if self.telemetry is not None:
+            self.telemetry.stop()
         if self.reminders is not None:
             self.reminders.stop()
         if self.listener is not None:
@@ -219,6 +227,24 @@ class Jarvis:
     def creator(self) -> str:
         """Who built JARVIS - the name the persona is grateful to."""
         return getattr(self.settings, "creator_name", "") or self.settings.owner_name
+
+    # -- visitor protocol ---------------------------------------------------
+    @property
+    def visitor(self) -> Optional[visitors.Visitor]:
+        """The dignitary currently in the room, if one was announced."""
+        try:
+            return visitors.from_facts(self.memory.facts())
+        except Exception:  # pragma: no cover - defensive
+            return None
+
+    def visitor_brief(self) -> str:
+        """Prompt block that keeps every reply in the right register."""
+        return visitors.brief(
+            self.visitor,
+            owner=self.settings.owner_name,
+            creator=self.creator,
+            assistant=self.settings.assistant_name,
+        )
 
     # ------------------------------------------------------------------ #
     # main entry point
@@ -365,6 +391,7 @@ class Jarvis:
                         assistant=self.settings.assistant_name,
                         owner=self.settings.owner_name,
                         creator=self.creator,
+                        visitor=self.visitor_brief(),
                     ),
                     max_tokens=self.settings.ai.max_tokens,
                 )
@@ -509,22 +536,55 @@ class Jarvis:
             log.exception("voice turn failed")
 
     def listen_once(self, timeout: float = 6.0) -> Reply:
-        """Push-to-talk used by the mic button in the GUI and web UI."""
+        """Push-to-talk used by the mic button in the GUI and web UI.
+
+        Voice input is a bonus, never a requirement: when there is no microphone
+        this returns an honest pointer at typed chat instead of an error the user
+        cannot act on.
+        """
         if self._mic_muted:
             return Reply(text="The microphone is muted. Unmute it and try again.", error=True)
         if self.listener is None:
-            return Reply(text="Microphone support isn't installed on this machine.", error=True)
+            return Reply(
+                text="No microphone support is installed on this machine - type your "
+                "message instead. Everything else works.",
+                error=True,
+            )
         self.events.set_state(STATE_LISTENING)
         transcript = self.listener.listen_once(timeout=timeout)
         if not transcript.ok:
             self.events.set_state(STATE_IDLE)
-            return Reply(text=transcript.error or "I couldn't hear anything.", error=True, source="voice")
+            return Reply(text=self._mic_failure(transcript.error), error=True, source="voice")
         self.events.publish("message", role="user", text=transcript.text, source="voice")
         return self.handle(transcript.text, source="voice")
 
     # ------------------------------------------------------------------ #
     # reminders, state and maintenance
     # ------------------------------------------------------------------ #
+    def _mic_failure(self, error: str) -> str:
+        """Turn a microphone failure into something the user can act on."""
+        listener = self.listener
+        status: Dict[str, Any] = {}
+        if listener is not None:
+            try:
+                status = listener.status() or {}
+            except Exception:  # pragma: no cover - defensive
+                status = {}
+        if listener is not None and not status.get("available", True):
+            reason = str(status.get("reason") or "")
+            if reason:
+                return reason
+            if str(status.get("engine") or "none") in {"", "none"}:
+                return (
+                    "Voice input needs a speech engine, and none is installed on this "
+                    "machine - type your message instead. Everything else works."
+                )
+            return (
+                "No microphone was found on this machine, so I can't listen - type "
+                "your message instead. Everything else works."
+            )
+        return error or "I couldn't hear anything."
+
     def _on_reminder(self, message: str) -> None:
         self.memory.add_assistant(message, kind="reminder")
         self.events.publish("message", role="assistant", text=message, kind="reminder")
@@ -638,17 +698,51 @@ class Jarvis:
         """
         listener = self.listener
         if listener is None:
-            return {"enabled": False, "running": False, "reason": "microphone support is not installed"}
-        if not listener.enabled:
             return {
                 "enabled": False,
                 "running": False,
+                "reason": "no microphone support is installed - type your messages instead",
+            }
+        if not listener.enabled:
+            try:
+                engine = str(listener.status().get("engine") or "none")
+            except Exception:  # pragma: no cover - defensive
+                engine = "none"
+            if engine in {"", "none"}:
+                return {
+                    "enabled": False,
+                    "running": False,
+                    "engine": "none",
+                    "text_only": True,
+                    "reason": (
+                        "voice input needs a speech engine, and none is installed on this "
+                        "machine (sh scripts/install.sh --voice) - type your messages "
+                        "instead; everything else works"
+                    ),
+                }
+            return {
+                "enabled": False,
+                "running": False,
+                "engine": engine,
                 "reason": (
                     "the microphone is disabled on this machine - set STT_ENABLED=true "
                     "and install the voice requirements, or use the browser microphone"
                 ),
             }
         if enabled:
+            status = listener.status()
+            if not status.get("available", True):
+                return {
+                    "enabled": False,
+                    "running": False,
+                    "engine": status.get("engine"),
+                    "text_only": True,
+                    "reason": status.get("reason")
+                    or (
+                        "no microphone was found on this machine - type your messages "
+                        "instead; everything else works"
+                    ),
+                }
             self.set_mic_muted(False)
             listener.resume()
             started = listener.start()
@@ -659,6 +753,7 @@ class Jarvis:
         return listener.status()
 
     def status(self) -> Dict[str, Any]:
+        visitor = self.visitor
         return {
             "state": self.events.state,
             "state_note": self.events.state_note,
@@ -672,7 +767,17 @@ class Jarvis:
             "mic": (
                 {**self.listener.status(), "muted": self._mic_muted}
                 if self.listener
-                else {"enabled": False, "engine": "none", "muted": self._mic_muted}
+                else {
+                    "enabled": False,
+                    "engine": "none",
+                    "muted": self._mic_muted,
+                    "available": False,
+                    "text_only": True,
+                    "reason": (
+                        "no microphone support is installed on this machine - "
+                        "type your messages instead; everything else works"
+                    ),
+                }
             ),
             "voice_output": self._voice_output,
             "voice_routing": self._routing,
@@ -684,6 +789,8 @@ class Jarvis:
             ),
             "tools": len(self.planner.tool_catalogue().splitlines()),
             "recent_tools": self.router.recent(8),
+            "visitor": visitor.as_dict() if visitor else None,
+            "machine": self.telemetry.snapshot(),
         }
 
 

@@ -53,6 +53,13 @@
     needsUnlock: false,
     lastState: "idle",
     liveTimer: null,
+    micStatus: null,
+    // voice input is a bonus: `textOnly` is set when no microphone path exists,
+    // and the console then says so instead of offering a dead button
+    textOnly: false,
+    browserMic: true,
+    micProbed: false,
+    warnedNoMic: false,
   };
 
   // A reply arrives twice when the socket is healthy: once in the HTTP response
@@ -97,6 +104,139 @@
     return now.toTimeString().slice(0, 8);
   }
 
+  /** The header's live clock and date, straight from this device's own time. */
+  function tickClock() {
+    var now = new Date();
+    var time = $("clock");
+    if (time) time.textContent = now.toTimeString().slice(0, 8);
+    var day = $("day");
+    if (day) {
+      day.textContent = now.toLocaleDateString(undefined, {
+        weekday: "short", day: "2-digit", month: "short", year: "numeric",
+      });
+    }
+  }
+
+  /* ---------------------------------------------------------------- boot */
+  // The boot sequence is decoration, so it can never trap the user: it fills
+  // itself in, finishes as soon as the backend answers, and gives up on its own
+  // if nothing ever answers.
+  var boot = { done: false, step: 0, timer: null, auto: null };
+
+  function startBoot() {
+    var bar = $("boot-bar");
+    if (!bar) { boot.done = true; return; }
+    boot.timer = setInterval(function () {
+      if (boot.step < bar.children.length) bar.children[boot.step].classList.add("on");
+      boot.step += 1;
+      if (boot.step >= bar.children.length) {
+        var note = $("boot-note");
+        if (note) note.textContent = "core online · console ready";
+      }
+    }, 130);
+    boot.auto = setTimeout(function () { finishBoot("no answer from the brain yet"); }, 4200);
+  }
+
+  function finishBoot(note) {
+    if (boot.done) return;
+    boot.done = true;
+    if (boot.timer) clearInterval(boot.timer);
+    if (boot.auto) clearTimeout(boot.auto);
+    var bar = $("boot-bar");
+    if (bar) {
+      Array.prototype.forEach.call(bar.children, function (segment) { segment.classList.add("on"); });
+    }
+    var message = $("boot-note");
+    if (message && note) message.textContent = note;
+    var overlay = $("boot");
+    if (overlay) {
+      overlay.classList.add("done");
+      setTimeout(function () { overlay.style.display = "none"; }, 460);
+    }
+    document.body.removeAttribute("data-boot");
+  }
+
+  /* ---------------------------------------------------------------- gauges */
+  var GAUGE_LENGTH = 301.6; // 2 * pi * r, r = 48 in the SVG
+
+  /** Paint one radial gauge. Unknown values show a dash rather than a guess. */
+  function paintGauge(fillId, valueId, ringPercent, label) {
+    var ring = $(fillId);
+    var text = $(valueId);
+    var known = typeof ringPercent === "number" && isFinite(ringPercent);
+    if (ring) {
+      var clamped = known ? Math.max(0, Math.min(100, ringPercent)) : 0;
+      ring.style.strokeDashoffset = String(GAUGE_LENGTH * (1 - clamped / 100));
+    }
+    if (text) text.textContent = known ? label : "\u2014";
+  }
+
+  function renderMachine(machine, toolCount) {
+    machine = machine || {};
+    var memory = machine.memory || {};
+    var disk = machine.disk || {};
+    var cpu = machine.cpu_percent;
+    var temp = machine.temperature_c;
+    paintGauge("gauge-cpu", "val-cpu", cpu, Math.round(cpu || 0) + "%");
+    paintGauge("gauge-ram", "val-ram", memory.percent, Math.round(memory.percent || 0) + "%");
+    paintGauge("gauge-disk", "val-disk", disk.percent, Math.round(disk.percent || 0) + "%");
+    // the temperature ring fills against a 0-100 C scale, the label reads out C
+    paintGauge("gauge-temp", "val-temp", temp, Math.round(temp || 0) + "\u00b0");
+
+    var stats = $("machine-stats");
+    if (!stats) return;
+    stats.innerHTML = "";
+    var rows = [
+      ["host", machine.host || "unknown"],
+      ["board", machine.board || (machine.is_pi ? "raspberry pi" : "generic")],
+      ["load", machine.load === null || machine.load === undefined ? "\u2014" : machine.load],
+      ["uptime", machine.uptime || "\u2014"],
+      ["cores", machine.cpu_count || "\u2014"],
+      ["tools", toolCount || 0],
+    ];
+    rows.forEach(function (pair) {
+      var box = document.createElement("span");
+      box.className = "stat";
+      box.innerHTML = pair[0] + " <b>" + escapeHtml(String(pair[1])) + "</b>";
+      stats.appendChild(box);
+    });
+    if (machine.error) addMachineNote(stats, "telemetry error: " + machine.error);
+  }
+
+  function addMachineNote(container, text) {
+    var note = document.createElement("p");
+    note.className = "muted small";
+    note.textContent = text;
+    container.appendChild(note);
+  }
+
+  /* ---------------------------------------------------------------- feed */
+  var MAX_FEED = 24;
+
+  function pushFeed(text, tone) {
+    var list = $("feed");
+    if (!list || !text) return;
+    var item = document.createElement("li");
+    item.textContent = clock() + "  " + text;
+    if (tone === "warn") item.style.color = "#ffd9d9";
+    else if (tone === "ok") item.style.color = "#b6ffe6";
+    list.insertBefore(item, list.firstChild);
+    while (list.children.length > MAX_FEED) list.removeChild(list.lastChild);
+  }
+
+  /* ---------------------------------------------------------------- visitor */
+  function renderVisitor(visitor) {
+    var box = $("visitor");
+    if (!box) return;
+    var label = $("visitor-label");
+    if (!visitor || !(visitor.label || visitor.raw)) {
+      box.classList.add("hidden");
+      return;
+    }
+    if (label) label.textContent = visitor.label || visitor.raw;
+    box.classList.remove("hidden");
+  }
+
   /* ---------------------------------------------------------------- api */
   function api(path, options) {
     var opts = options || {};
@@ -131,8 +271,21 @@
   }
 
   /* ---------------------------------------------------------------- render */
+  // Reads like the HUD it is modelled on: the state name shown on screen is the
+  // console's own word for what the brain is doing, never an invented metric.
+  var MISSION = {
+    boot: "initialising",
+    idle: "standby · nominal",
+    listening: "capturing audio",
+    thinking: "processing request",
+    working: "executing tool",
+    speaking: "speaking",
+    error: "attention required",
+  };
+
   function setState(name, note) {
     if (!name) return;
+    var changed = name !== state.lastState;
     state.lastState = name;
     document.body.setAttribute("data-state", name);
     var tone = "idle";
@@ -141,7 +294,13 @@
     else if (name === "error") tone = "warn";
     setPill($("pill-state"), note || name, tone);
     var label = $("state-label");
-    if (label) label.textContent = (state.live ? "live talk · " : "") + (note || name);
+    var shown = note || name;
+    if (label) label.textContent = (state.live ? "live talk · " : "") + shown;
+    var mission = $("mission");
+    if (mission) mission.textContent = MISSION[name] || name;
+    var coreMode = $("core-mode");
+    if (coreMode) coreMode.textContent = shown;
+    if (changed) pushFeed("state · " + shown);
   }
 
   function setPill(pill, text, tone) {
@@ -382,18 +541,6 @@
     });
   }
 
-  function renderSystem(status) {
-    var hardware = status.hardware || {};
-    var speech = status.speech || {};
-    var mic = status.mic || {};
-    statRow($("system-stats"), [
-      ["voice", speech.engine || "off"],
-      ["mic", mic.engine || "off"],
-      ["gpio", hardware.backend || "none"],
-      ["tools", status.tools || 0],
-    ]);
-  }
-
   function renderHardware(hardware) {
     var list = $("device-list");
     hardware = hardware || {};
@@ -426,6 +573,52 @@
     });
   }
 
+  /**
+   * Does this browser have a microphone at all? Only ever answers "no" when it
+   * is sure, and the answer arrives asynchronously (labels need permission).
+   */
+  function probeBrowserMic() {
+    if (state.micProbed) return;
+    state.micProbed = true;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    navigator.mediaDevices.enumerateDevices().then(function (devices) {
+      state.browserMic = devices.some(function (device) {
+        return device.kind === "audioinput";
+      });
+      updateVoiceMode();
+    }, function () { /* cannot tell: assume there is one */ });
+  }
+
+  /**
+   * Voice input needs a microphone *and* something to recognise it with: the Pi's
+   * own microphone, or this device's microphone plus a backend STT engine.
+   * When neither exists the console goes text-only - visibly, not silently.
+   */
+  function updateVoiceMode() {
+    var mic = state.micStatus || {};
+    var engine = String(mic.engine || "none");
+    var canTranscribe = engine !== "none" && mic.can_transcribe !== false;
+    state.textOnly = !(mic.available === true || (canTranscribe && state.browserMic));
+
+    var textOnly = state.textOnly;
+    var hint = $("hint");
+    if (hint) {
+      hint.textContent = textOnly
+        ? "No microphone needed - type your message. Enter sends, Shift+Enter for a new line."
+        : "Enter sends · Shift+Enter for a new line · actions that touch your system ask first";
+    }
+    document.body.setAttribute("data-voice-in", textOnly ? "off" : "on");
+    button("btn-mic").disabled = textOnly;
+    button("btn-live").disabled = textOnly;
+    if (textOnly) {
+      button("btn-mic").title = "No microphone on this machine - type your message instead";
+      button("btn-live").title = "No microphone on this machine - type your message instead";
+    } else {
+      button("btn-mic").title = "Hold a conversation turn: press, speak, press again";
+      button("btn-live").title = "Live Talk: keep listening and answering without pressing anything";
+    }
+  }
+
   function renderVoice(status) {
     var speech = status.speech || {};
     var mic = status.mic || {};
@@ -433,6 +626,10 @@
     // blocker - all that matters is that the backend engine can synthesize.
     state.voiceAvailable = !!(speech.synthesis_available || speech.available);
     state.micAvailable = !!mic.enabled;
+    state.micStatus = mic;
+    updateVoiceMode();
+    // only worth asking the browser when a backend engine could use its audio
+    if (String(mic.engine || "none") !== "none") probeBrowserMic();
     statRow($("voice-stats"), [
       ["voice", speech.engine || "none"],
       ["out", state.voiceMuted ? "off" : (status.voice_output || state.voiceOut)],
@@ -444,15 +641,19 @@
       pillNote.textContent = "voice " + (speech.engine || "none") + " · mic " + (mic.engine || "none");
     }
     var note = $("voice-note");
-    if (!speech.synthesis_available && !speech.available) {
+    if (state.textOnly) {
+      note.textContent = "No microphone is available here, so voice input is off. Type " +
+        "your messages - chat, tools, memory and JARVIS's spoken replies all still work." +
+        " Plug in a USB microphone and reload for voice.";
+    } else if (!speech.synthesis_available && !speech.available) {
       note.textContent = "No speech engine is installed on the machine running JARVIS, " +
         "so replies are text only. Install the voice requirements, then reload.";
     } else if (!speech.available) {
       note.textContent = "This machine has no speaker, so JARVIS's voice is played " +
         "here in the browser.";
     } else if (!mic.available) {
-      note.textContent = "The microphone engine is not installed on the Pi, so the " +
-        "Microphone and Live Talk buttons use this device's microphone through /api/transcribe.";
+      note.textContent = "The Pi has no microphone of its own, so the Microphone and Live " +
+        "Talk buttons use this device's microphone through /api/transcribe.";
     } else if (!mic.enabled) {
       note.textContent = "Microphone input is disabled in .env (STT_ENABLED=false). " +
         "Live Talk still works from this device's microphone.";
@@ -528,6 +729,11 @@
     document.body.setAttribute("data-mic", state.micMuted ? "off" : "on");
     document.body.setAttribute("data-voice", state.voiceMuted ? "off" : "on");
     document.body.setAttribute("data-live", state.live ? "on" : "off");
+    if (state.textOnly) {
+      // no microphone anywhere: the two voice-input controls stay out of the way
+      button("btn-mic").disabled = true;
+      button("btn-live").disabled = true;
+    }
   }
 
   /** Play audio the backend produced and drive the "speaking" state. */
@@ -718,7 +924,11 @@
           var name = (error && error.name) || "";
           var message = name === "NotAllowedError" || name === "SecurityError"
             ? "microphone permission was refused - allow it in your browser, or use the Pi's own microphone"
-            : (error && error.message) || "the microphone could not be opened";
+            : name === "NotFoundError" || name === "DevicesNotFoundError"
+              ? "this device has no microphone - type your message instead"
+              : name === "NotReadableError" || name === "TrackStartError"
+                ? "the microphone is already in use by another app - type your message instead"
+                : (error && error.message) || "the microphone could not be opened";
           reject(new Error(message));
         });
       });
@@ -822,7 +1032,7 @@
   function setBusy(busy) {
     state.busy = busy;
     button("btn-send").disabled = busy;
-    if (!state.live) button("btn-mic").disabled = busy;
+    if (!state.live) button("btn-mic").disabled = busy || state.textOnly;
   }
 
   /* ---------------------------------------------------------------- microphone */
@@ -867,15 +1077,23 @@
       .catch(function (error) {
         state.listening = false;
         setControls();
-        if (error && error.message === "cancelled") { setState("idle", "idle"); return null; }
-        addMessage("system", (error && error.message) || "the microphone failed");
-        setState("error", "mic");
-        if (/speech engine|not installed/i.test(error.message) && state.live) {
-          // nothing can transcribe on this machine: stop rather than loop on failure
+        var message = (error && error.message) || "the microphone failed";
+        if (message === "cancelled") { setState("idle", "idle"); return null; }
+        addMessage("system", message);
+        pushFeed("microphone · " + message, "warn");
+        // A missing microphone must never make the console look broken: it goes
+        // back to idle with a note, and typed chat keeps working exactly as before.
+        if (/no microphone|no speech engine|speech engine|not installed|refused|in use/i.test(message)) {
+          setState("idle", "microphone unavailable · type instead");
+        } else {
+          setState("idle", "idle");
+        }
+        if (state.live) {
+          // nothing can transcribe here: stop rather than loop on failure
           setLive(false);
-          addMessage("system",
-            "Live Talk stopped. Install the speech engine on the machine running JARVIS " +
-            "(sh scripts/install.sh --voice), or set STT_ENABLED=true, then reload.");
+          addMessage("system", "Live Talk stopped. You can still type every message - " +
+            "or install the speech engine on the machine running JARVIS " +
+            "(sh scripts/install.sh --voice) and reload.");
         }
         return null;
       });
@@ -883,6 +1101,11 @@
 
   function toggleMic() {
     if (state.busy) return;
+    if (state.textOnly) {
+      addMessage("system", "There's no microphone here, so I can't listen - type your " +
+        "message instead. Everything except voice input works.");
+      return;
+    }
     if (recorder.active()) {
       recorder.finish();  // stop now and send what was said
       return;
@@ -914,6 +1137,11 @@
 
   /* ---------------------------------------------------------------- live talk */
   function setLive(enabled) {
+    if (enabled && state.textOnly) {
+      addMessage("system", "Live Talk needs a microphone and a speech engine. Neither is " +
+        "available here, so type your messages instead - everything else works.");
+      return;
+    }
     state.live = enabled;
     setControls();
     if (state.liveTimer) { clearTimeout(state.liveTimer); state.liveTimer = null; }
@@ -1060,7 +1288,8 @@
     setState(status.state || "idle", status.state_note || status.state);
     renderProviders(status.providers);
     renderMemory(status.memory, status.facts);
-    renderSystem(status);
+    renderMachine(status.machine, status.tools);
+    renderVisitor(status.visitor);
     renderHardware(status.hardware);
     renderVoice(status);
     renderToolLog(status.recent_tools);
@@ -1087,7 +1316,25 @@
     setPill($("pill-brain"), live.length ? live[0].slug : "offline", live.length ? "ok" : "warn");
     setControls();
 
-    if (!keepThread) renderHistory(payload.messages);
+    if (!keepThread) {
+      renderHistory(payload.messages);
+      // Say plainly what a keyless install can and cannot do - silence here
+      // would read as "it is broken" the first time it runs.
+      if (!live.length && !state.warnedNoProvider) {
+        state.warnedNoProvider = true;
+        addMessage("system", "No AI provider key is configured on this machine, so general " +
+          "questions are answered by the offline engine. Time, maths, system status, " +
+          "memory, your GPIO devices and the visitor protocol already work; add " +
+          "GEMINI_API_KEY or GROQ_API_KEY to .env and restart JARVIS for everything else. " +
+          "Setup help is at /docs.");
+      }
+      if (state.textOnly && !state.warnedNoMic) {
+        state.warnedNoMic = true;
+        addMessage("system", "No microphone is available here, so voice input is off - " +
+          "nothing else changes. Type every message in the box below: chat, tools, memory, " +
+          "reminders and JARVIS's spoken replies all work without a microphone.");
+      }
+    }
   }
 
   function setOnline(online, why) {
@@ -1097,6 +1344,7 @@
     if (online) {
       banner.classList.add("hidden");
       button("btn-send").disabled = state.busy;
+      finishBoot("core online · console ready");
     } else {
       banner.classList.remove("hidden");
       var detail = banner.querySelector("span");
@@ -1110,6 +1358,10 @@
     return api("/api/state").then(function (payload) {
       setOnline(true);
       applySnapshot(payload, true);
+      // The log block is the real backend ring buffer, not a client echo.
+      api("/api/logs?limit=40")
+        .then(function (logs) { renderLogs((logs || {}).logs); })
+        .catch(function () {});
       return payload;
     }).catch(function (error) {
       setOnline(false, "This page is served but it cannot reach the JARVIS brain (" + error.message +
@@ -1164,6 +1416,16 @@
       case "state":
         setState(event.state, event.note || event.state);
         break;
+      case "visitor":
+        renderVisitor(event.visitor);
+        pushFeed(
+          event.visitor && (event.visitor.label || event.visitor.raw)
+            ? "visitor · " + (event.visitor.label || event.visitor.raw)
+            : (event.message || "visitor protocol closed"),
+          "warn"
+        );
+        refresh().catch(function () {});
+        break;
       case "message":
         if (event.role === "user" && event.text) {
           // a turn that came from the device's microphone (Live Talk)
@@ -1176,15 +1438,18 @@
             messageId: event.message_id,
           });
           if (shown) requestSpeech(event.text);
+          pushFeed("reply ready" + (event.provider ? " · " + event.provider : ""));
         }
         break;
       case "tool_start":
         showTyping(event.tool);
         setState("working", event.tool);
+        pushFeed("tool → " + event.tool);
         break;
       case "tool_result":
         removeTyping();
         if (!event.ok) addMessage("system", event.tool + " failed: " + (event.error || "unknown error"));
+        pushFeed(event.tool + (event.ok ? " · ok" : " · failed"), event.ok ? "ok" : "warn");
         break;
       case "confirm":
         setState("working", "waiting for your go-ahead");
@@ -1194,7 +1459,20 @@
         refresh().catch(function () {});
         break;
       case "stt_error":
-        addMessage("system", "microphone: " + (event.message || "error"));
+        if (event.fatal) {
+          // The backend gave up on its microphone: say it once, and never again.
+          // (A phone's browser can still dictate, so the client decides what that
+          // means - it refreshes its own microphone status instead of assuming.)
+          refresh().catch(function () {});
+          if (!state.warnedNoMic) {
+            state.warnedNoMic = true;
+            addMessage("system", event.message || "No microphone is available - type your message instead.");
+            pushFeed("microphone · unavailable", "warn");
+          }
+        } else {
+          addMessage("system", "microphone: " + (event.message || "error"));
+          pushFeed("microphone · " + (event.message || "error"), "warn");
+        }
         break;
       case "mic":
         state.micMuted = !!event.muted;
@@ -1230,9 +1508,32 @@
   }
 
   /* ---------------------------------------------------------------- wiring */
+  function focusBlock(id) {
+    var block = $(id);
+    if (!block) return;
+    if (!window.matchMedia("(min-width: 1180px)").matches) openPanel(true);
+    block.scrollIntoView({ behavior: "smooth", block: "start" });
+    block.classList.add("flash");
+    setTimeout(function () { block.classList.remove("flash"); }, 900);
+  }
+
+  var panelNode = null;
+  var scrimNode = null;
+
+  function openPanel(open) {
+    if (!panelNode) panelNode = $("panel");
+    if (!scrimNode) scrimNode = $("scrim");
+    panelNode.classList.toggle("open", open);
+    scrimNode.classList.toggle("show", open);
+  }
+
   function init() {
     setState("idle", "connecting");
     setControls();
+    tickClock();
+    setInterval(tickClock, 1000);
+    startBoot();
+    pushFeed("console starting");
 
     $("composer").addEventListener("submit", function (event) {
       event.preventDefault();
@@ -1263,27 +1564,38 @@
         .catch(function () {});
     });
 
-    // Delegated, so the suggestion chips keep working after the thread is rebuilt.
-    thread().addEventListener("click", function (event) {
+    // Delegated on the document, because the suggestion chips live both in the
+    // intro message and in the quick-command bar.
+    document.addEventListener("click", function (event) {
       var target = /** @type {HTMLElement} */ (event.target);
+      if (!target || !target.closest) return;
       var chip = target.closest(".chip");
       if (!chip) return;
       send(chip.getAttribute("data-fill") || chip.textContent || "");
     });
 
-    var panel = $("panel");
-    var scrim = $("scrim");
-    var openPanel = function (open) {
-      panel.classList.toggle("open", open);
-      scrim.classList.toggle("show", open);
-    };
+    var visitorClear = $("btn-visitor-clear");
+    if (visitorClear) {
+      visitorClear.addEventListener("click", function () { send("the guest has left"); });
+    }
+
+    // The rail is a shortcut into the telemetry column, not decoration: each
+    // button scrolls to a real block and highlights it.
+    Array.prototype.forEach.call(document.querySelectorAll(".rail-btn[data-goto]"), function (node) {
+      node.addEventListener("click", function () { focusBlock(node.getAttribute("data-goto")); });
+    });
+
     button("btn-panel").addEventListener("click", function () { openPanel(true); });
     button("btn-panel-close").addEventListener("click", function () { openPanel(false); });
-    scrim.addEventListener("click", function () { openPanel(false); });
+    $("scrim").addEventListener("click", function () { openPanel(false); });
 
     // The browser needs one gesture before it will play audio.
     document.addEventListener("click", unlockAudio);
     document.addEventListener("touchstart", unlockAudio);
+
+    // ...and any gesture gets past the boot screen if it is still showing.
+    document.addEventListener("click", function () { finishBoot("skipped"); });
+    document.addEventListener("keydown", function () { finishBoot("skipped"); });
 
     window.addEventListener("beforeunload", function () {
       if (recorder.active()) recorder.cancel();

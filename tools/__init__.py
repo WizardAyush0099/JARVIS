@@ -11,6 +11,7 @@ from tools import coding  # noqa: F401
 from tools import email_tool  # noqa: F401
 from tools import files  # noqa: F401
 from tools import image  # noqa: F401
+from tools import protocol  # noqa: F401
 from tools import system  # noqa: F401
 from tools import utilities  # noqa: F401
 from tools import web  # noqa: F401
@@ -35,7 +36,18 @@ from tools.base import (  # noqa: F401
 #: The modules that populate the registry.  Kept as a named tuple so the imports
 #: above read as intentional side effects rather than forgotten ones, and so
 #: there is exactly one list to extend when a capability is added.
-MODULES = (base, coding, email_tool, files, image, system, utilities, web, hardware_gpio)
+MODULES = (
+    base,
+    coding,
+    email_tool,
+    files,
+    image,
+    protocol,
+    system,
+    utilities,
+    web,
+    hardware_gpio,
+)
 
 #: Tools the GPIO layer contributes (handy for diagnostics and the docs).
 HARDWARE_TOOL_NAMES = ("hardware_list", "hardware_read", "hardware_write", "hardware_pulse")

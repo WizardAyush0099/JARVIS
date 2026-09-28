@@ -23,6 +23,7 @@ nano .env                                    # add one API key
 - [Run it in the cloud from your phone (no Raspberry Pi needed)](#run-it-in-the-cloud-from-your-phone-no-raspberry-pi-needed)
 - [Architecture](#architecture)
 - [What you can ask for](#what-you-can-ask-for)
+- [Visitor protocol (when someone important walks in)](#visitor-protocol-when-someone-important-walks-in)
 - [AI providers and automatic fallback](#ai-providers-and-automatic-fallback)
 - [Voice](#voice)
 - [Memory](#memory)
@@ -46,6 +47,11 @@ rebuild was driven by the development specification in
 [`JARVIS_UPGRADE_PROMPT.md`](JARVIS_UPGRADE_PROMPT.md) plus the file layout and
 feature list from the previous version. Everything the old project did is still
 here; the parts that were fragile were re-engineered rather than copied.
+
+The console itself is a HUD: a boot sequence, an arc-reactor core that changes
+colour with JARVIS's state, live CPU / memory / temperature / disk gauges, an
+activity feed and a telemetry column - and it is still one HTML file, one CSS
+file and one JS file with **no build step and no npm**.
 
 Highlights of the rebuild:
 
@@ -77,6 +83,10 @@ git clone https://github.com/WizardAyush0099/JARVIS.git
 cd JARVIS
 sh scripts/setup-pi.sh --voice --hardware --dev     # one command, everything
 ```
+
+(No git? Download the ZIP from the repo's green **Code** button and unzip it - the
+result is identical. The repo has a `.vscode/` folder with run configurations and
+tasks, so `F5`, `Ctrl+Shift+B` and *Run Task* work as soon as the folder is open.)
 
 The installer creates a virtual environment, installs the core packages, runs the
 diagnostics, and tells you what is still missing. It is safe to re-run - it only
@@ -122,7 +132,8 @@ network or a quota runs out.
 ```
 
 `--check` reports your providers, keys, tools, microphone, speakers, GPIO backend
-and internet state. Run it first whenever something misbehaves.
+and internet state. Run it first whenever something misbehaves. It also reminds
+you that typed chat needs no microphone - voice input is entirely optional.
 
 ---
 
@@ -130,6 +141,12 @@ and internet state. Run it first whenever something misbehaves.
 
 This is the whole path from an empty Pi to JARVIS running on it. Nothing here
 needs a terminal beyond the two commands in step 2.
+
+> **Just want the folder?** On the GitHub page use the green **Code** button →
+> **Download ZIP**, unzip it on the Pi, and open the folder in VS Code. That ZIP
+> is the complete project: the backend and the console are plain source, so there
+> is no `npm install` and no build step to run - `setup-pi.sh` installs the small
+> set of Python packages and you are done.
 
 **1. Get the code into VS Code on the Pi** - pick whichever fits you:
 
@@ -220,7 +237,7 @@ one click.
    The container installs the requirements and starts JARVIS for you.
 2. Open the **Ports** tab (next to *Terminal*), find the row labelled
    **JARVIS console**, right-click it and set **Port Visibility → Public**.
-3. Tap the globe icon for that port. That URL is the console — orb, chat, mic and
+3. Tap the globe icon for that port. That URL is the console - the reactor core, chat, mic and
    Live Talk — and it opens in Chrome on your phone.
 
 **Voice works there.** `edge-tts` is installed by the devcontainer and synthesizes
@@ -275,6 +292,18 @@ interface:
 | **Voice on/off** | mutes JARVIS's spoken replies, keeping the text |
 | **Stop** | cuts off the current sentence immediately |
 | **Clear** | empties the conversation (your remembered facts stay) |
+
+Around them the HUD shows the truth about the machine it is running on:
+
+| Part of the console | What it is |
+|---|---|
+| Boot sequence | `INITIATING SYSTEM 1...` while the page links to the brain - skipped by any click, and it never blocks the app |
+| Reactor core | the orb; its colour and the level meter follow the real state (idle / listening / thinking / working / speaking / error) |
+| System monitor | CPU, memory, temperature and disk gauges, sampled on a background thread. A metric this machine cannot report shows a dash, never a fake number |
+| AI core | the provider chain and which one is currently answering |
+| Visitor banner | appears while visitor protocol is active, with a *stand down* button |
+| Activity feed + log | every tool call, state change and reply as it happens, plus the backend log ring buffer |
+| Rail | jumps to any of those blocks (it opens the drawer first on a phone) |
 
 ### How the voice actually works
 
@@ -394,8 +423,52 @@ layer - intent rules, planner prompt, answer prompt and the web console - follow
 > "list my hardware devices" · "turn on the status LED" · "flash the status LED" ·
 > "read room temperature" · "is the button pressed" · "set the servo to 90"
 
+**Visitors** *(see the next section)*
+
+> "the chief minister of himachal pradesh is here" · "the governor is visiting" ·
+> "we have a guest" · "who is the guest" · "the guest has left"
+
 **Anything else** - explanations, writing, planning, study help - goes to the model
 with your conversation and stored facts as context.
+
+---
+
+## Visitor protocol (when someone important walks in)
+
+If a minister, an official or any honoured guest is shown the project, you do not
+want a generic "Hello, how can I help?". Say who is there and JARVIS switches to
+visitor protocol:
+
+```
+the chief minister of himachal pradesh is here
+```
+
+JARVIS then:
+
+- introduces itself by name and says plainly that **Ayush built it**;
+- addresses the guest by their office - *"It's an honour to have the Chief
+  Minister of Himachal Pradesh in the room"* - and offers a walkthrough of the
+  voice, tools, sensors and memory;
+- keeps everything private about you private. A visitor gets the project, never
+  your memories, messages, files, contacts or finances, and JARVIS says so out
+  loud;
+- **never ranks the visitor above you.** It states out loud, in the same breath,
+  that you are its creator and its first priority - so if the two ever conflict,
+  it follows you.
+
+| You say | What happens |
+|---|---|
+| "the cm is here" · "the chief minister of himachal pradesh is here" | formal self-introduction, protocol on |
+| "we have a guest" · "there is a vip with me" · "my friend ravi is here" | same, warmer when it is a named friend |
+| "the district collector of kullu is visiting" · "mr sharma is here" | office or honourific is enough - no name needed |
+| "who is the guest" · "is anyone here" | reports who is currently with you |
+| "the guest has left" · "the visit is over" | stands down, back to normal |
+
+The console shows a **visitor protocol** banner while it is active, and the read
+route works with no API key at all: recognition, the greeting and the stand-down
+are deterministic rules in `core/visitors.py`, and the same facts are injected
+into both system prompts so a Gemini/Groq reply stays in the same register. Add an
+office to the table in `core/visitors.py` and JARVIS knows how to address it.
 
 ---
 
@@ -457,6 +530,21 @@ wins; the default voice is chosen to be calm, deep and assistant-like:
 
 Speech runs on its own thread with a queue, so talking never blocks the interface.
 Hindi/Hinglish is detected automatically and switches to `hi-IN-MadhurNeural`.
+
+**No microphone? Nothing is broken.** Voice input is a bonus, never a dependency:
+
+- every feature - chat, tools, memory, reminders, search, images, GPIO and the
+  visitor protocol - is driven by **typed text** and works with no microphone, no
+  sound card, no USB device and no speech engine installed at all;
+- the console **disables** the *Mic* and *Live Talk* buttons and says why, instead
+  of offering you a control that cannot work, and the composer keeps the focus;
+- a missing device or a missing engine is reported **once**, with the exact command
+  to install voice if you want it. It never retries in a loop and never floods the
+  chat with errors;
+- a Pi with no microphone of its own can still recognise audio a **phone's browser**
+  sends to `/api/transcribe`, as long as an STT engine is installed;
+- plug a USB microphone in later and voice resumes on the next start - no code
+  change, no reinstall.
 
 For Piper:
 
@@ -624,7 +712,7 @@ Everything is optional and lives in `.env` (see [`env.example`](env.example)).
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests -q          # 224 tests
+.venv/bin/python -m pytest tests -q          # 269 tests
 .venv/bin/python -m pyflakes config core ai tools voice hardware gui server main.py   # clean
 npx --yes -p typescript tsc -b --noEmit      # type-checks the browser client
 ```
@@ -791,7 +879,7 @@ JARVIS/
 │   ├── web/                 the browser interface (plain HTML/CSS/JS)
 │   └── desktop.py           optional Tkinter window
 │
-├── tests/                   224 hermetic tests
+├── tests/                   269 hermetic tests
 ├── scripts/                 install.sh, run.sh
 ├── data/                    memory, chat log, notes, reminders, trash
 ├── assets/generated/        images JARVIS creates

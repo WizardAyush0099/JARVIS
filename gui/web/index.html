@@ -3,14 +3,29 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#04070d" />
+<meta name="theme-color" content="#02060c" />
 <meta name="description" content="JARVIS - a personal AI assistant running on a Raspberry Pi 4." />
 <title>JARVIS</title>
 <link rel="manifest" href="/manifest.webmanifest" />
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="/static/styles.css" />
 </head>
-<body data-state="boot" data-live="off" data-mic="on" data-voice="on">
+<body data-state="boot" data-live="off" data-mic="on" data-voice="on" data-boot="on">
+
+<!-- boot sequence: replaced by the real console once state arrives -->
+<div class="boot" id="boot" role="status" aria-live="polite">
+  <div class="boot-frame">
+    <span class="tick tick-tl"></span><span class="tick tick-tr"></span>
+    <span class="tick tick-bl"></span><span class="tick tick-br"></span>
+    <p class="boot-title">INITIATING SYSTEM 1<span class="boot-dots">...</span></p>
+    <div class="boot-bar" id="boot-bar" aria-hidden="true">
+      <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+    </div>
+    <p class="boot-note" id="boot-note">booting core &middot; linking to the local brain</p>
+  </div>
+</div>
+
+<div class="grid-overlay" aria-hidden="true"></div>
 
 <div id="offline-banner" class="banner hidden" role="status">
   <strong>Backend offline.</strong>
@@ -24,12 +39,23 @@
       <span class="orb-bloom"></span>
       <span class="orb-ring"></span>
       <span class="orb-ring orb-ring-2"></span>
+      <span class="orb-ring orb-ring-3"></span>
       <span class="orb-core"></span>
     </div>
     <div class="brand-text">
       <h1>JARVIS</h1>
       <p id="brand-sub">personal ai &middot; connecting&hellip;</p>
     </div>
+  </div>
+
+  <div class="mission">
+    <span class="micro">system status</span>
+    <span class="mission-value" id="mission">standby</span>
+  </div>
+
+  <div class="clock">
+    <span class="clock-time" id="clock">--:--:--</span>
+    <span class="micro" id="day">&mdash;</span>
   </div>
 
   <div class="pills" id="pills">
@@ -45,21 +71,78 @@
        aria-label="Setup and troubleshooting">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1.9-1.1 1.8"/><path d="M12 17h.01"/></svg>
     </a>
-    <button class="icon-btn" id="btn-panel" title="Status panel" aria-label="Status panel">
+    <button class="icon-btn" id="btn-panel" title="Telemetry" aria-label="Telemetry">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
   </div>
 </header>
 
 <main class="layout">
+
+  <nav class="rail" aria-label="Console sections">
+    <button type="button" class="rail-btn" data-goto="block-core" title="AI core">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/></svg>
+      <span>core</span>
+    </button>
+    <button type="button" class="rail-btn" data-goto="block-voice" title="Voice and microphone">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10M8 8v4M16 7v6M4 11v2M20 10v4"/></svg>
+      <span>voice</span>
+    </button>
+    <button type="button" class="rail-btn" data-goto="block-memory" title="Memory">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4z"/><path d="M4 10h16M9 6v12"/></svg>
+      <span>memory</span>
+    </button>
+    <button type="button" class="rail-btn" data-goto="block-system" title="System monitor">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14l4-6 4 4 3-6 4 8"/><path d="M3 20h18"/></svg>
+      <span>system</span>
+    </button>
+    <button type="button" class="rail-btn" data-goto="block-hardware" title="Hardware">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M4 10h3M4 14h3M17 10h3M17 14h3M10 4v3M14 4v3M10 17v3M14 17v3"/></svg>
+      <span>gpio</span>
+    </button>
+    <button type="button" class="rail-btn" data-goto="block-activity" title="Activity feed">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M4 12h16M4 18h7"/></svg>
+      <span>feed</span>
+    </button>
+    <button type="button" class="rail-btn" data-goto="block-logs" title="Log">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h9l4 4v12H6z"/><path d="M9 12h7M9 16h7"/></svg>
+      <span>log</span>
+    </button>
+    <a class="rail-btn" href="/docs" title="Setup and troubleshooting">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1.9-1.1 1.8"/><path d="M12 17h.01"/></svg>
+      <span>manual</span>
+    </a>
+  </nav>
+
   <section class="chat" aria-live="polite">
+
+    <div class="core-stage">
+      <div class="reactor" id="reactor" aria-hidden="true">
+        <span class="reactor-glow"></span>
+        <span class="reactor-ring reactor-ring-1"></span>
+        <span class="reactor-ring reactor-ring-2"></span>
+        <span class="reactor-ring reactor-ring-3"></span>
+        <span class="reactor-ticks"></span>
+        <span class="reactor-core"></span>
+      </div>
+      <div class="core-meta">
+        <span class="core-word">J A R V I S</span>
+        <span class="core-sub micro">ai core &middot; <span id="core-mode">standby</span></span>
+        <div class="level" id="level" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+      </div>
+    </div>
 
     <div class="state-strip">
       <span class="state-label" id="state-label">connecting</span>
-      <div class="level" id="level" aria-hidden="true">
-        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-      </div>
       <span class="state-note muted small" id="state-note"></span>
+    </div>
+
+    <div id="visitor" class="visitor hidden" role="status">
+      <span class="visitor-mark" aria-hidden="true"></span>
+      <span class="visitor-text">visitor protocol &middot; <strong id="visitor-label">&mdash;</strong></span>
+      <button type="button" class="btn ghost small" id="btn-visitor-clear">stand down</button>
     </div>
 
     <div class="thread" id="thread">
@@ -76,10 +159,10 @@
           <div class="suggestions" id="suggestions">
             <button class="chip" data-fill="system status">system status</button>
             <button class="chip" data-fill="what time is it">what time is it</button>
+            <button class="chip" data-fill="who made you">who made you</button>
             <button class="chip" data-fill="search for Raspberry Pi 5 news">search the web</button>
-            <button class="chip" data-fill="generate an image of a futuristic city at night">generate an image</button>
+            <button class="chip" data-fill="the chief minister of himachal pradesh is here">visitor protocol</button>
             <button class="chip" data-fill="list my hardware devices">my devices</button>
-            <button class="chip" data-fill="remember my project is called Athena">remember something</button>
           </div>
         </div>
       </article>
@@ -95,6 +178,16 @@
         <button class="btn danger" id="btn-confirm-no">No, cancel</button>
         <button class="btn primary" id="btn-confirm-yes">Yes, do it</button>
       </div>
+    </div>
+
+    <div class="quickbar" id="quickbar">
+      <span class="micro quick-label">quick commands</span>
+      <button class="chip" data-fill="system status">system status</button>
+      <button class="chip" data-fill="who is most important to you">top priority</button>
+      <button class="chip" data-fill="read the cpu temperature">cpu temp</button>
+      <button class="chip" data-fill="what can you do">capabilities</button>
+      <button class="chip" data-fill="remember my project is called Athena">remember</button>
+      <button class="chip" data-fill="the guest has left">stand down</button>
     </div>
 
     <div class="console-bar" id="console-bar">
@@ -133,16 +226,58 @@
     <p class="hint muted small" id="hint">Enter sends &middot; Shift+Enter for a new line &middot; actions that touch your system ask first</p>
   </section>
 
-  <aside class="panel" id="panel" aria-label="Status">
+  <aside class="panel" id="panel" aria-label="Telemetry">
     <div class="panel-head">
-      <h2>Status</h2>
-      <button class="icon-btn" id="btn-panel-close" aria-label="Close panel">
+      <h2>Telemetry</h2>
+      <button class="icon-btn" id="btn-panel-close" aria-label="Close telemetry">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
       </button>
     </div>
     <div class="panel-body">
-      <section class="block">
-        <h3>Voice</h3>
+
+      <section class="block" id="block-system">
+        <h3>System monitor</h3>
+        <div class="gauges">
+          <figure class="gauge" data-tone="cyan">
+            <svg viewBox="0 0 120 120" aria-hidden="true">
+              <circle class="gauge-track" cx="60" cy="60" r="48"></circle>
+              <circle class="gauge-fill" id="gauge-cpu" cx="60" cy="60" r="48"></circle>
+            </svg>
+            <figcaption><b id="val-cpu">&mdash;</b><span>cpu</span></figcaption>
+          </figure>
+          <figure class="gauge" data-tone="violet">
+            <svg viewBox="0 0 120 120" aria-hidden="true">
+              <circle class="gauge-track" cx="60" cy="60" r="48"></circle>
+              <circle class="gauge-fill" id="gauge-ram" cx="60" cy="60" r="48"></circle>
+            </svg>
+            <figcaption><b id="val-ram">&mdash;</b><span>memory</span></figcaption>
+          </figure>
+          <figure class="gauge" data-tone="amber">
+            <svg viewBox="0 0 120 120" aria-hidden="true">
+              <circle class="gauge-track" cx="60" cy="60" r="48"></circle>
+              <circle class="gauge-fill" id="gauge-temp" cx="60" cy="60" r="48"></circle>
+            </svg>
+            <figcaption><b id="val-temp">&mdash;</b><span>temp</span></figcaption>
+          </figure>
+          <figure class="gauge" data-tone="green">
+            <svg viewBox="0 0 120 120" aria-hidden="true">
+              <circle class="gauge-track" cx="60" cy="60" r="48"></circle>
+              <circle class="gauge-fill" id="gauge-disk" cx="60" cy="60" r="48"></circle>
+            </svg>
+            <figcaption><b id="val-disk">&mdash;</b><span>disk</span></figcaption>
+          </figure>
+        </div>
+        <div class="stats" id="machine-stats"></div>
+      </section>
+
+      <section class="block" id="block-core">
+        <h3>Ai core &middot; providers</h3>
+        <ul class="list" id="provider-list"></ul>
+        <button class="btn ghost small" id="btn-reset-providers">reset provider cooldowns</button>
+      </section>
+
+      <section class="block" id="block-voice">
+        <h3>Voice &amp; microphone</h3>
         <div class="stats" id="voice-stats"></div>
         <div class="seg" role="group" aria-label="Where JARVIS speaks">
           <button type="button" class="seg-btn" id="btn-out-browser" aria-pressed="false">this browser</button>
@@ -151,40 +286,31 @@
         <p class="muted small" id="voice-note"></p>
       </section>
 
-      <section class="block">
-        <h3>Brain</h3>
-        <ul class="list" id="provider-list"></ul>
-        <button class="btn ghost small" id="btn-reset-providers">reset provider cooldowns</button>
-      </section>
-
-      <section class="block">
+      <section class="block" id="block-memory">
         <h3>Memory</h3>
         <div class="stats" id="memory-stats"></div>
         <ul class="list facts" id="fact-list"></ul>
       </section>
 
-      <section class="block">
-        <h3>Machine</h3>
-        <div class="stats" id="system-stats"></div>
-      </section>
-
-      <section class="block">
+      <section class="block" id="block-hardware">
         <h3>Hardware</h3>
         <div class="stats" id="hardware-stats"></div>
         <ul class="list" id="device-list"></ul>
       </section>
 
-      <section class="block">
-        <h3>Recent tool activity</h3>
+      <section class="block" id="block-activity">
+        <h3>Activity feed</h3>
+        <ul class="list feed" id="feed"></ul>
+        <h3 class="sub">Recent tool activity</h3>
         <ul class="list tools" id="tool-log"></ul>
       </section>
 
-      <section class="block">
+      <section class="block" id="block-logs">
         <h3>Log</h3>
         <ul class="list logs" id="log-list"></ul>
       </section>
 
-      <section class="block">
+      <section class="block" id="block-manual">
         <h3>Manual</h3>
         <a class="btn ghost small" id="btn-docs" href="/docs">setup &amp; troubleshooting</a>
       </section>
