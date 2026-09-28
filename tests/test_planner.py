@@ -140,6 +140,15 @@ def test_system_prompt_contains_identity_facts_and_tools(settings, memory):
     assert "Athena" in prompt
     assert "calculate" in prompt
     assert "JSON" in prompt
+    # the persona is personal: creator, gratitude and "who matters most"
+    assert "creator" in prompt.lower()
+    assert "most important" in prompt.lower()
+
+
+def test_system_prompt_follows_a_custom_creator(settings, memory):
+    settings.creator_name = "Ada"
+    prompt = make_planner(settings, memory, StubManager()).system_prompt()
+    assert "Ada" in prompt
 
 
 def test_tool_catalogue_lists_every_registered_tool(settings, memory):

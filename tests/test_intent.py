@@ -52,6 +52,50 @@ def test_identity_greeting_uses_owner_name_once():
     assert found.direct_reply.count("Ayush") == 1
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "who made you",
+        "who created you",
+        "who built you",
+        "who is your creator",
+        "who is your maker",
+        "who do you thank for existing",
+    ],
+)
+def test_identity_names_the_creator(text):
+    found = match(text)
+    assert found is not None and found.name == "identity_creator", text
+    assert "Ayush" in found.direct_reply
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "who is most important to you",
+        "who matters most to you",
+        "who do you care about most",
+        "who is your favourite person",
+    ],
+)
+def test_identity_says_who_matters_most(text):
+    found = match(text)
+    assert found is not None and found.name == "identity_important", text
+    assert "Ayush" in found.direct_reply
+
+
+def test_identity_self_introduces_the_creator():
+    found = match("who are you")
+    assert found is not None
+    assert "Ayush" in found.direct_reply
+
+
+def test_identity_creator_can_be_overridden():
+    found = intent.match("who made you", owner="Ayush", assistant="JARVIS", creator="Ada")
+    assert found is not None and "Ada" in found.direct_reply
+    assert "Ayush" not in found.direct_reply
+
+
 # --------------------------------------------------------------------------- #
 # fast facts
 # --------------------------------------------------------------------------- #

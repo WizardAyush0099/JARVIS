@@ -55,6 +55,13 @@ class OfflineEngine:
             return getattr(self.settings, "assistant_name", "JARVIS")
         return env("JARVIS_NAME", "JARVIS")
 
+    @property
+    def creator(self) -> str:
+        """Who built JARVIS; defaults to the owner when unset."""
+        if self.settings is not None:
+            return getattr(self.settings, "creator_name", "") or self.owner
+        return env("JARVIS_CREATOR", env("JARVIS_OWNER", "Ayush"))
+
     def capabilities(self) -> List[str]:
         return [
             "time and date",
@@ -67,7 +74,12 @@ class OfflineEngine:
         ]
 
     def summary(self) -> Dict[str, Any]:
-        return {"engine": "offline", "owner": self.owner, "capabilities": self.capabilities()}
+        return {
+            "engine": "offline",
+            "owner": self.owner,
+            "creator": self.creator,
+            "capabilities": self.capabilities(),
+        }
 
     # -- answering ---------------------------------------------------------
     def answer(self, text: str, ctx: Any = None) -> Optional[str]:
@@ -75,7 +87,9 @@ class OfflineEngine:
         if not text or not text.strip():
             return None
 
-        found = intent_layer.match(text, owner=self.owner, assistant=self.assistant)
+        found = intent_layer.match(
+            text, owner=self.owner, assistant=self.assistant, creator=self.creator
+        )
         if found is None:
             return self._memory_fallback(text)
 

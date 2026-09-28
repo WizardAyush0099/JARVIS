@@ -18,7 +18,9 @@ nano .env                                    # add one API key
 
 - [What this is](#what-this-is)
 - [Quick start on a Raspberry Pi 4](#quick-start-on-a-raspberry-pi-4)
+- [Put it on your Pi with VS Code (one command)](#put-it-on-your-pi-with-vs-code-one-command)
 - [Opening JARVIS on your phone, the Pi, or VS Code](#opening-jarvis-on-your-phone-the-pi-or-vs-code)
+- [Run it in the cloud from your phone (no Raspberry Pi needed)](#run-it-in-the-cloud-from-your-phone-no-raspberry-pi-needed)
 - [Architecture](#architecture)
 - [What you can ask for](#what-you-can-ask-for)
 - [AI providers and automatic fallback](#ai-providers-and-automatic-fallback)
@@ -73,12 +75,15 @@ Highlights of the rebuild:
 ```bash
 git clone https://github.com/WizardAyush0099/JARVIS.git
 cd JARVIS
-sh scripts/install.sh --voice --hardware
+sh scripts/setup-pi.sh --voice --hardware --dev     # one command, everything
 ```
 
 The installer creates a virtual environment, installs the core packages, runs the
-diagnostics, and tells you what is still missing. Without `--voice`/`--hardware`
-you get a text-only assistant.
+diagnostics, and tells you what is still missing. It is safe to re-run - it only
+fills in what is missing and never overwrites your `.env`. Without
+`--voice`/`--hardware` you get a text-only assistant, and `--lean` is the
+smallest possible install. The lower-level `sh scripts/install.sh` still exists if
+you prefer to pick the extras yourself.
 
 If PyAudio fails (it needs the PortAudio headers):
 
@@ -121,6 +126,54 @@ and internet state. Run it first whenever something misbehaves.
 
 ---
 
+## Put it on your Pi with VS Code (one command)
+
+This is the whole path from an empty Pi to JARVIS running on it. Nothing here
+needs a terminal beyond the two commands in step 2.
+
+**1. Get the code into VS Code on the Pi** - pick whichever fits you:
+
+| Situation | What to do |
+|---|---|
+| VS Code is already on the Pi | *File -> Open Folder*, or `Ctrl+Shift+P` -> **Git: Clone** -> `https://github.com/WizardAyush0099/JARVIS.git` |
+| VS Code is on your laptop, no monitor on the Pi | Install the **Remote - SSH** extension, connect to `pi@<pi-ip>`, then **Git: Clone** the same URL on the Pi |
+| You just want the files | On the repo page click **Code -> Download ZIP**, unzip it on the Pi, then *File -> Open Folder* |
+| Terminal instead | `git clone https://github.com/WizardAyush0099/JARVIS.git && cd JARVIS && code .` |
+
+**2. Run the setup task once.** In VS Code press `Ctrl+Shift+P` -> **Tasks: Run
+Task** -> **JARVIS: setup on this machine (one command)**. That is exactly:
+
+```bash
+sh scripts/setup-pi.sh --voice --hardware --dev
+```
+
+It builds `.venv`, installs the core, voice and GPIO packages, creates `.env` from
+`env.example` and finishes with the health report. If PyAudio complains about
+PortAudio, re-run it as `sh scripts/setup-pi.sh --system` to have the Debian audio
+and GPIO packages installed for you (it asks for your password once), or add your
+AI keys in the next step first - JARVIS runs fine without voice.
+
+**3. Add a key.** Open `.env` in VS Code and paste at least one provider key
+(`GEMINI_API_KEY` is the quickest free one). Everything else already works.
+
+**4. Start it.** Press `F5` and choose **JARVIS: web interface** (or `Ctrl+Shift+B`
+for the `JARVIS: run web interface` task). The console opens in VS Code's Simple
+Browser / forwarded port, and the startup banner prints your Pi's LAN address:
+
+```
+  network : http://192.168.1.42:8765/
+```
+
+Open that address on your phone - same Wi-Fi, no app to install, *Add to Home
+Screen* for full-screen. To run it later without VS Code attached:
+
+```bash
+.venv/bin/python main.py            # foreground
+sh scripts/cloud.sh                 # background, logs/cloud.log, --stop to stop
+```
+
+---
+
 ## Opening JARVIS on your phone, the Pi, or VS Code
 
 JARVIS serves a browser interface on port `8765`, bound to `0.0.0.0` so every
@@ -153,6 +206,56 @@ assistant:
 ```ini
 JARVIS_WEB_TOKEN=pick-something-long
 ```
+
+---
+
+## Run it in the cloud from your phone (no Raspberry Pi needed)
+
+You do not need a Pi to see JARVIS running. GitHub Codespaces runs this folder on
+GitHub's servers, gives you VS Code in the browser, and forwards port `8765` to a
+URL you can open on your phone. The `.devcontainer/` in this repo makes that
+one click.
+
+1. On the GitHub repo page: **Code → Codespaces → Create codespace on `main`**.
+   The container installs the requirements and starts JARVIS for you.
+2. Open the **Ports** tab (next to *Terminal*), find the row labelled
+   **JARVIS console**, right-click it and set **Port Visibility → Public**.
+3. Tap the globe icon for that port. That URL is the console — orb, chat, mic and
+   Live Talk — and it opens in Chrome on your phone.
+
+**Voice works there.** `edge-tts` is installed by the devcontainer and synthesizes
+JARVIS's replies on the backend, which the phone's browser then plays. The browser
+never synthesizes speech itself; it only plays the file the engine produced.
+
+To drive it from the container's own terminal instead:
+
+```bash
+sh scripts/cloud.sh          # start in the background, logs to logs/cloud.log
+sh scripts/cloud.sh --stop   # stop it again
+```
+
+Two things worth knowing:
+
+- The forwarded port is public by default, so anyone holding the URL can drive your
+  assistant. Put `JARVIS_WEB_TOKEN=something-long` in the Codespace secrets and
+  JARVIS will require it. Codespace secrets are also the right place for your AI key.
+- **Microphone input** needs a speech recogniser on the backend, and a bare
+  Codespace does not have one. The console says exactly that instead of pretending
+  to listen — the buttons still work, they just report what is missing. Installing
+  the voice requirements enables it; the Pi is still the intended home for full
+  voice in *and* out.
+
+### Getting the code onto a machine you control
+
+```bash
+git clone https://github.com/WizardAyush0099/JARVIS.git
+cd JARVIS
+```
+
+Open that folder in VS Code — on the Pi itself, over **Remote - SSH** from another
+machine, or locally. The launch configs ship in `.vscode/`: press **F5** and pick
+*JARVIS: web interface*, which starts the server and forwards port `8765` for you.
+No git? Use **Code → Download ZIP** on the repo page.
 
 Then open `http://<pi-ip>:8765/?token=pick-something-long`. The page keeps the
 token for the session; without it the API returns `401`.
@@ -234,6 +337,19 @@ emits a plan that is validated against the tool registry first.
 ---
 
 ## What you can ask for
+
+**Identity**
+
+JARVIS is yours, and it knows it. It was built by `JARVIS_CREATOR` (Ayush by
+default) for `JARVIS_OWNER`, and the persona is openly grateful to its creator:
+
+> "who made you" · "who is your creator" · "who is most important to you" ·
+> "who do you care about most"
+
+All four answer with your name, from deterministic rules that work with **no API
+key and no internet**, and the same facts are in the model's system prompt so a
+provider-backed reply stays in character. Change either name in `.env` and every
+layer - intent rules, planner prompt, answer prompt and the web console - follows.
 
 **System**
 
@@ -488,6 +604,7 @@ Everything is optional and lives in `.env` (see [`env.example`](env.example)).
 | Variable | Default | Purpose |
 |---|---|---|
 | `JARVIS_NAME` / `JARVIS_OWNER` | `JARVIS` / `Ayush` | identity used in prompts and replies |
+| `JARVIS_CREATOR` | value of `JARVIS_OWNER` | who built JARVIS; "who made you" answers with this name |
 | `AI_PROVIDERS` | `gemini,groq,openrouter` | fallback order |
 | `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, … | – | provider keys |
 | `OLLAMA_ENABLED`, `OLLAMA_MODEL` | `false` | fully local model |

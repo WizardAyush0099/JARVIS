@@ -43,6 +43,7 @@ def test_state_snapshot_shape(client):
     for key in ("identity", "settings", "status", "messages"):
         assert key in payload
     assert payload["identity"]["owner"] == "Ayush"
+    assert payload["identity"]["creator"] == "Ayush"
     assert "providers" in payload["status"]
 
 
@@ -51,6 +52,13 @@ def test_chat_round_trip(client):
     assert response.status_code == 200
     body = response.json()
     assert "Ayush" in body["reply"]["text"]
+
+
+def test_chat_answers_who_made_you(client):
+    response = client.post("/api/chat", json={"text": "who made you"})
+    assert response.status_code == 200
+    text = response.json()["reply"]["text"]
+    assert "Ayush" in text
 
 
 def test_chat_requires_text(client):

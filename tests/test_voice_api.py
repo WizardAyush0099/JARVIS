@@ -131,6 +131,54 @@ class _NullSink:
         return False
 
 
+# --------------------------------------------------------------------------- #
+# a machine with no speaker still has a voice: the browser plays it
+# --------------------------------------------------------------------------- #
+def test_browser_voice_works_without_a_local_speaker(settings, events):
+    """Headless boxes (cloud containers, phones) have no audio sink at all.
+
+    The engine still writes a playable file and the browser fetches it, so the
+    missing sink must not silence JARVIS with a 503.  This is the exact setup a
+    Codespace runs in.
+    """
+    from voice.tts import NullSink
+
+    settings.tts.enabled = True
+    jarvis = make_jarvis(settings, events, engine=StubTTSEngine())
+    jarvis.speaker.sink = NullSink()  # what `build_sink()` returns with no sound card
+    jarvis.set_voice_output("browser")
+
+    assert jarvis.speaker.available is False
+    assert jarvis.speaker.synthesis_available is True
+
+    app = create_app(settings, jarvis)
+    with TestClient(app) as client:
+        response = client.post("/api/speak", json={"text": "hello there"})
+        assert response.status_code == 200
+        assert response.json()["url"].startswith("/media/voice/")
+        speech = client.get("/api/state").json()["status"]["speech"]
+        assert speech["synthesis_available"] is True
+        assert speech["available"] is False
+
+
+def test_speak_still_503s_when_no_engine_is_installed(settings, events):
+    """No engine at all is the one case that genuinely is text-only."""
+    from voice.tts import NullEngine
+
+    settings.tts.enabled = True
+    jarvis = make_jarvis(settings, events, engine=StubTTSEngine())
+    jarvis.speaker.engine = NullEngine()
+    jarvis.set_voice_output("browser")
+
+    assert jarvis.speaker.synthesis_available is False
+
+    app = create_app(settings, jarvis)
+    with TestClient(app) as client:
+        response = client.post("/api/speak", json={"text": "hello"})
+        assert response.status_code == 503
+        assert "no speech engine is installed" in response.json()["detail"]
+
+
 @pytest.fixture
 def engine():
     return StubTTSEngine()

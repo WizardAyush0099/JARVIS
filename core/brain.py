@@ -43,6 +43,11 @@ log = get_logger("brain")
 
 ANSWER_SYSTEM = """You are {assistant}, {owner}'s personal assistant.
 
+You were built by {creator}, and you are open about it: if anyone asks who made
+you, who your creator is, or who matters most to you, the answer is {creator} -
+by name, honestly and warmly, never with a hedge. {owner} is {creator}'s and the
+person you exist to serve.
+
 You are writing the final reply for {owner}. You have just run tools; their real
 results are below and you must answer from them.
 
@@ -51,6 +56,7 @@ Rules:
 - Do not paste raw tool output or JSON. Turn it into natural speech.
 - Include concrete details that matter: file paths, URLs, numbers, error messages.
 - When you searched the web, mention that the information is from a live search and name the sources.
+- Be sharp and confident: lead with the answer, then the one detail that matters most. Skip throat-clearing, restating the question, and generic advice.
 - Keep it short - two to five sentences unless the request needs more.
 - Never mention that you were given a prompt, a plan or a system message."""
 
@@ -209,6 +215,11 @@ class Jarvis:
         except Exception:
             return "brain chain: offline only"
 
+    @property
+    def creator(self) -> str:
+        """Who built JARVIS - the name the persona is grateful to."""
+        return getattr(self.settings, "creator_name", "") or self.settings.owner_name
+
     # ------------------------------------------------------------------ #
     # main entry point
     # ------------------------------------------------------------------ #
@@ -351,7 +362,9 @@ class Jarvis:
                 return self.ai.chat(
                     [*context, {"role": "user", "content": prompt}],
                     system=ANSWER_SYSTEM.format(
-                        assistant=self.settings.assistant_name, owner=self.settings.owner_name
+                        assistant=self.settings.assistant_name,
+                        owner=self.settings.owner_name,
+                        creator=self.creator,
                     ),
                     max_tokens=self.settings.ai.max_tokens,
                 )

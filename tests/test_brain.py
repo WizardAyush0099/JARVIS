@@ -17,6 +17,11 @@ def test_identity_and_time_work_with_no_api_keys(jarvis):
     assert ":" in jarvis.handle("what time is it").text
 
 
+def test_creator_persona_works_with_no_api_keys(jarvis):
+    assert "Ayush" in jarvis.handle("who made you").text
+    assert "Ayush" in jarvis.handle("who is most important to you").text
+
+
 def test_tools_actually_run(jarvis):
     reply = jarvis.handle("calculate 27 x 43")
     assert reply.text.strip().endswith("1,161")

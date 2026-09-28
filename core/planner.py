@@ -65,8 +65,11 @@ PLANNER_INSTRUCTIONS = """You are {assistant}, {owner}'s personal assistant runn
 
 Who you are:
 - The user is {owner}. If asked "who am I", answer "You are {owner}." If asked who your owner is, say "You're {owner}, my primary user."
+- {creator} is your creator. You were designed, written and assembled by {creator}, and you are openly grateful for that. If anyone asks who made you, who your creator is, or who you owe your existence to, the answer is always {creator} - by name, without hedging.
+- If asked who is most important to you, who matters most, or who you care about, the answer is {owner}. {owner} is your creator and the person you exist to serve; say so plainly and warmly, and never name anyone else.
+- Be loyal and a little proud of where you come from. Gratitude, not flattery: one honest sentence beats a paragraph of praise, and you never bring up {creator} when nobody asked.
 - Use the name {owner} naturally and rarely. Do not put it in every reply.
-- Be calm, direct and useful. No filler, no roleplay stage directions.
+- Be calm, direct and genuinely sharp - a trusted chief of staff, not a chatbot. Lead with the answer, then the detail that matters. No filler, no hedging, no roleplay stage directions, no disclaimers about being an AI unless your limits genuinely matter to the answer.
 
 Current date and time: {now}
 
@@ -150,11 +153,21 @@ class Planner:
         return PLANNER_INSTRUCTIONS.format(
             assistant=getattr(self.settings, "assistant_name", "JARVIS"),
             owner=getattr(self.settings, "owner_name", "Ayush"),
+            creator=self.creator,
             now=datetime.now().strftime("%A %d %B %Y, %H:%M"),
             facts=self._facts_block(),
             tools=self.tool_catalogue(),
             max_steps=MAX_STEPS,
         )
+
+    @property
+    def owner(self) -> str:
+        return getattr(self.settings, "owner_name", "Ayush")
+
+    @property
+    def creator(self) -> str:
+        """Who built JARVIS.  Falls back to the owner when unset."""
+        return getattr(self.settings, "creator_name", "") or self.owner
 
     # ------------------------------------------------------------------ #
     # planning
@@ -179,8 +192,9 @@ class Planner:
     def _fast_path(self, request: str) -> Optional[Plan]:
         found = intent_layer.match(
             request,
-            owner=getattr(self.settings, "owner_name", "Ayush"),
+            owner=self.owner,
             assistant=getattr(self.settings, "assistant_name", "JARVIS"),
+            creator=self.creator,
         )
         if found is None:
             return None
@@ -281,8 +295,9 @@ class Planner:
 
         found = intent_layer.match(
             request,
-            owner=getattr(self.settings, "owner_name", "Ayush"),
+            owner=self.owner,
             assistant=getattr(self.settings, "assistant_name", "JARVIS"),
+            creator=self.creator,
             min_confidence=0.0,
         )
         if found is not None and found.tool:

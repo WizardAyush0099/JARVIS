@@ -2,6 +2,20 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "JARVIS: setup on this machine (one command)",
+      "detail": "Creates .venv, installs core + voice + hardware + dev, makes .env, runs the doctor. Safe to re-run.",
+      "type": "shell",
+      "command": "sh scripts/setup-pi.sh --voice --hardware --dev",
+      "problemMatcher": []
+    },
+    {
+      "label": "JARVIS: setup on this machine (+ system packages)",
+      "detail": "Same as above, and apt-get installs the Pi audio/GPIO packages (asks for sudo).",
+      "type": "shell",
+      "command": "sh scripts/setup-pi.sh --voice --hardware --dev --system",
+      "problemMatcher": []
+    },
+    {
       "label": "JARVIS: install (core + dev)",
       "type": "shell",
       "command": "sh scripts/install.sh --dev",
@@ -29,6 +43,10 @@
       "label": "JARVIS: run web interface",
       "type": "shell",
       "command": ".venv/bin/python main.py --web || python3 main.py --web",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
       "isBackground": true,
       "presentation": {
         "reveal": "always",

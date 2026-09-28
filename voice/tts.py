@@ -453,6 +453,19 @@ class Speaker:
         return not isinstance(self.engine, NullEngine) and not isinstance(self.sink, NullSink)
 
     @property
+    def synthesis_available(self) -> bool:
+        """True when the engine can *produce* audio, local playback aside.
+
+        ``available`` answers "can JARVIS play sound on this machine?".  A
+        headless box - a cloud container, a Pi with no speaker, a phone driving
+        the web UI - has no audio sink, yet the engine still writes a perfectly
+        playable file that the browser fetches from ``/media/voice``.  Gating the
+        browser voice on ``available`` made JARVIS go mute on every machine
+        without a local sound card, so that decision uses this instead.
+        """
+        return not isinstance(self.engine, NullEngine)
+
+    @property
     def muted(self) -> bool:
         return self._muted
 
@@ -482,6 +495,7 @@ class Speaker:
             "engine": self.engine.name,
             "sink": self.sink.name,
             "available": self.available,
+            "synthesis_available": self.synthesis_available,
             "local_output": self._local_output,
             "speaking": self.speaking,
             "queued": self._queue.qsize(),

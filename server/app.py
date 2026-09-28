@@ -171,6 +171,7 @@ def create_app(settings: Optional[Settings] = None, jarvis: Optional[Jarvis] = N
             "identity": {
                 "assistant": settings.assistant_name,
                 "owner": settings.owner_name,
+                "creator": settings.creator_name,
             },
             "settings": settings.public_dict(),
             "status": jarvis_instance.status(),
@@ -334,7 +335,10 @@ def create_app(settings: Optional[Settings] = None, jarvis: Optional[Jarvis] = N
             raise HTTPException(status_code=400, detail="text is required")
         if state.jarvis.speaker is None:
             raise HTTPException(status_code=503, detail="speech output is not installed")
-        if not state.jarvis.speaker.available:
+        # The browser is what plays this audio, so a machine without its own
+        # sound card (a cloud container, a headless Pi) is not a blocker - only
+        # a missing engine is.
+        if not state.jarvis.speaker.synthesis_available:
             raise HTTPException(
                 status_code=503,
                 detail=(

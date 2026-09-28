@@ -295,6 +295,8 @@
       '<div class="hero" aria-hidden="true"><span class="hero-ring"></span>' +
       '<span class="hero-ring hero-ring-2"></span><span class="hero-core">J</span></div>' +
       "<p><strong>" + escapeHtml(identity.assistant) + "</strong> is online.</p>" +
+      '<p class="muted" id="intro-credit">Built by <strong>' + escapeHtml(identity.creator) +
+      "</strong> for " + escapeHtml(identity.owner) + ".</p>" +
       '<p class="muted">Type a message, press <strong>Mic</strong> to talk, or start ' +
       "<strong>Live Talk</strong> for a hands-free conversation.</p>" +
       '<div class="suggestions" id="suggestions">' +
@@ -307,7 +309,7 @@
     thread().appendChild(article);
   }
 
-  var identity = { assistant: "JARVIS", owner: "Ayush" };
+  var identity = { assistant: "JARVIS", owner: "Ayush", creator: "Ayush" };
 
   /* ---------------------------------------------------------------- panel */
   function renderProviders(providers) {
@@ -427,7 +429,9 @@
   function renderVoice(status) {
     var speech = status.speech || {};
     var mic = status.mic || {};
-    state.voiceAvailable = !!speech.available;
+    // This browser plays the audio, so a missing *local* speaker is not a
+    // blocker - all that matters is that the backend engine can synthesize.
+    state.voiceAvailable = !!(speech.synthesis_available || speech.available);
     state.micAvailable = !!mic.enabled;
     statRow($("voice-stats"), [
       ["voice", speech.engine || "none"],
@@ -440,9 +444,12 @@
       pillNote.textContent = "voice " + (speech.engine || "none") + " · mic " + (mic.engine || "none");
     }
     var note = $("voice-note");
-    if (!speech.available) {
+    if (!speech.synthesis_available && !speech.available) {
       note.textContent = "No speech engine is installed on the machine running JARVIS, " +
         "so replies are text only. Install the voice requirements, then reload.";
+    } else if (!speech.available) {
+      note.textContent = "This machine has no speaker, so JARVIS's voice is played " +
+        "here in the browser.";
     } else if (!mic.available) {
       note.textContent = "The microphone engine is not installed on the Pi, so the " +
         "Microphone and Live Talk buttons use this device's microphone through /api/transcribe.";
@@ -1040,8 +1047,13 @@
     if (who.assistant) {
       identity.assistant = who.assistant;
       identity.owner = who.owner || identity.owner;
+      identity.creator = who.creator || identity.creator || identity.owner;
       document.title = who.assistant;
       $("intro-name").textContent = who.assistant;
+      var credit = $("intro-credit");
+      if (credit) {
+        credit.textContent = "Built by " + identity.creator + " for " + identity.owner + ".";
+      }
       $("brand-sub").textContent = "personal ai · " + identity.owner;
     }
     var status = payload.status || {};
@@ -1064,8 +1076,9 @@
         : voice.mode;
     }
     var speech = status.speech || {};
-    setPill($("pill-voice"), !speech.available ? "no voice" : (state.voiceMuted ? "muted" : speech.engine || "voice"),
-      !speech.available ? "warn" : (state.voiceMuted ? "warn" : "ok"));
+    var voiceOk = !!(speech.synthesis_available || speech.available);
+    setPill($("pill-voice"), !voiceOk ? "no voice" : (state.voiceMuted ? "muted" : speech.engine || "voice"),
+      !voiceOk ? "warn" : (state.voiceMuted ? "warn" : "ok"));
     var mic = status.mic || {};
     setPill($("pill-mic"), state.micMuted ? "muted" : (mic.engine || "off"),
       state.micMuted ? "warn" : (mic.enabled ? "ok" : "muted"));

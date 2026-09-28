@@ -499,6 +499,9 @@ class PathSettings:
 class Settings:
     assistant_name: str = "JARVIS"
     owner_name: str = "Ayush"
+    #: who built JARVIS.  The persona is loyal to the creator by name, so this
+    #: is what "who made you" answers with.  It defaults to the owner.
+    creator_name: str = "Ayush"
     language: str = "auto"
     ai: AISettings = field(default_factory=AISettings)
     search: SearchSettings = field(default_factory=SearchSettings)
@@ -547,6 +550,7 @@ class Settings:
         settings = cls(
             assistant_name=env("JARVIS_NAME", "JARVIS"),
             owner_name=env("JARVIS_OWNER", "Ayush"),
+            creator_name=env("JARVIS_CREATOR", env("JARVIS_OWNER", "Ayush")),
             language=env("JARVIS_LANGUAGE", "auto").lower(),
             ai=AISettings(
                 providers=resolve_providers(timeout=timeout),
@@ -642,6 +646,7 @@ class Settings:
         return {
             "assistant_name": self.assistant_name,
             "owner_name": self.owner_name,
+            "creator_name": self.creator_name,
             "language": self.language,
             "env_files": list(self.env_files),
             "providers": [

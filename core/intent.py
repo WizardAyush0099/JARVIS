@@ -116,6 +116,7 @@ def _rule_greeting(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
 def _rule_identity(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
     owner = ctx["owner"]
     assistant = ctx["assistant"]
+    creator = ctx.get("creator") or owner
     if re.search(r"\b(who am i|what(?:'s| is) my name|do you know me)\b", text):
         return Intent("identity_user", category="identity", direct_reply=f"You are {owner}.", reason="identity")
     if re.search(r"\b(who (?:is|'s) your (?:owner|user|boss|master)|who (?:do you|d'?you) (?:belong to|work for)|who owns you)\b", text):
@@ -125,13 +126,51 @@ def _rule_identity(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
             direct_reply=f"You're {owner}, my primary user.",
             reason="identity",
         )
+    if re.search(
+        r"\b(who (?:made|created|built|designed|wrote|programmed|developed) you"
+        r"|who (?:is|'s) your (?:creator|maker|developer|builder|father|dad|parent)"
+        r"|who do you (?:owe|thank)|your creator)\b",
+        text,
+    ):
+        return Intent(
+            "identity_creator",
+            category="identity",
+            direct_reply=(
+                f"{creator} built me. I'm {assistant}, and I exist because of {creator} - "
+                f"every capability I have traces back to that work. I'm grateful for it, and "
+                f"I don't forget it."
+            ),
+            reason="identity",
+        )
+    if re.search(
+        r"\b(who (?:is|'s) (?:the )?most important (?:person |human )?(?:to you|in your life)"
+        r"|who matters most to you|who do you (?:love|care about|like) (?:the )?most"
+        r"|who is your (?:favourite|favorite) person|who comes first for you)\b",
+        text,
+    ):
+        return Intent(
+            "identity_important",
+            category="identity",
+            direct_reply=(
+                f"{owner}. {owner} is my creator and the person I exist to serve - "
+                f"no one else comes close."
+            )
+            if creator.lower() == owner.lower()
+            else (
+                f"{owner}. {creator} made me, and {owner} is the person I exist to serve - "
+                f"no one else comes close."
+            ),
+            reason="identity",
+        )
     if re.search(r"\b(who are you|what(?:'s| is) your name|introduce yourself|what are you)\b", text):
         return Intent(
             "identity_self",
             category="identity",
             direct_reply=(
-                f"I'm {assistant}, your personal assistant. I run locally on your Raspberry Pi, "
-                "can use tools, search the web, manage files and talk to you."
+                f"I'm {assistant}, the personal assistant {creator} built"
+                f"{'' if creator.lower() == owner.lower() else ' for ' + owner}. "
+                "I run locally on a Raspberry Pi, can use tools, search the web, "
+                "manage files and talk to you."
             ),
             reason="identity",
         )
@@ -701,6 +740,7 @@ def match(
     text: str,
     owner: str = "Ayush",
     assistant: str = "JARVIS",
+    creator: str = "",
     min_confidence: float = 0.7,
 ) -> Optional[Intent]:
     """Return the deterministic intent for ``text``, or ``None``.
@@ -711,7 +751,7 @@ def match(
     query = normalize(text, assistant)
     if not query:
         return None
-    ctx = {"owner": owner, "assistant": assistant}
+    ctx = {"owner": owner, "assistant": assistant, "creator": creator or owner}
     for rule in RULE_FUNCTIONS:
         try:
             intent = rule(query, ctx)
