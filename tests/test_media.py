@@ -144,6 +144,49 @@ def test_a_named_player_can_be_targeted(fake_playerctl: FakePlayerctl):
     assert state["title"] == "Lofi Beats"
 
 
+def test_a_polling_reader_reuses_a_recent_snapshot(fake_playerctl: FakePlayerctl):
+    """A cached answer must not cost another fork of playerctl.
+
+    The console polls /api/media; without this the Pi spawns three processes
+    every poll for a title that changes far more slowly.
+    """
+    media._SNAPSHOT_CACHE.clear()
+
+    first = media.snapshot("", media.SNAPSHOT_TTL)
+    calls_after_first = len(fake_playerctl.calls())
+
+    second = media.snapshot("", media.SNAPSHOT_TTL)
+
+    assert second is first  # the very same answer, not a fresh read
+    assert len(fake_playerctl.calls()) == calls_after_first
+    # a different player is a different question, so it is never served from
+    # another player's cache entry
+    media.snapshot("chromium", media.SNAPSHOT_TTL)
+    assert len(fake_playerctl.calls()) > calls_after_first
+
+
+def test_the_uncached_default_always_reads_the_player(fake_playerctl: FakePlayerctl):
+    media._SNAPSHOT_CACHE.clear()
+    first = media.snapshot()
+    calls_after_first = len(fake_playerctl.calls())
+    second = media.snapshot()
+
+    assert second is not first
+    assert len(fake_playerctl.calls()) > calls_after_first
+
+
+def test_a_transport_action_never_shows_a_stale_track(fake_playerctl: FakePlayerctl, settings):
+    media._SNAPSHOT_CACHE.clear()
+    media.snapshot("", media.SNAPSHOT_TTL)  # prime the cache
+    media.apply_action("pause")
+
+    result = media.media_now_playing()
+
+    assert result.ok is True
+    assert result.output is not None
+    assert fake_playerctl.did("--player spotify pause")
+
+
 def test_nothing_playing_is_reported_not_invented(fake_playerctl: FakePlayerctl, monkeypatch):
     monkeypatch.setenv("FAKE_NO_PLAYERS", "1")
     state = media.snapshot()

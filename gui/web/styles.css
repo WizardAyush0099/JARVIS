@@ -769,19 +769,6 @@ body[data-state="idle"] .level { opacity: 0.45; }
 .confirm-text p { margin: 0; }
 .confirm-actions { display: flex; gap: 8px; }
 
-/* ------------------------------------------------------------------ quick bar */
-.quickbar {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-  background: rgba(5, 13, 22, 0.72);
-}
-.quick-label { margin-right: 2px; }
-
 /* ------------------------------------------------------------------ buttons */
 .btn {
   border: 1px solid var(--line);

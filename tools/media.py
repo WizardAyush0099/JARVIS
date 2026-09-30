@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.logging_setup import get_logger
@@ -32,6 +33,15 @@ log = get_logger("tools.media")
 #: How long any single playerctl call may take.  D-Bus replies are instant; a
 #: hang here means the session bus is wedged, not that the song is long.
 CALL_TIMEOUT = 6.0
+
+#: One snapshot is three playerctl processes (``--list``, ``metadata``,
+#: ``status``, plus ``position`` while playing).  The console re-reads it every
+#: few seconds, which on a Raspberry Pi means forking dozens of processes a
+#: minute for a title that changes far more slowly than that.  Cached answers
+#: are therefore reused for a few seconds - long enough to collapse a burst of
+#: readers into one set of calls, short enough that nobody can tell.
+SNAPSHOT_TTL = 4.0
+_SNAPSHOT_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 
 INSTALL_HINT = (
     "media control needs playerctl, which talks to your music player over D-Bus. "
@@ -161,13 +171,29 @@ def active_player(preferred: str = "") -> Optional[str]:
     return _choose(players(), preferred)
 
 
-def snapshot(player: str = "") -> Dict[str, Any]:
+def snapshot(player: str = "", max_age: float = 0.0) -> Dict[str, Any]:
     """What is playing right now, read from the player itself.
 
     Always returns a dict.  ``available`` is False when there is no player at all
     (or playerctl is missing) - the console shows that honestly instead of an
     empty track title.
+
+    ``max_age`` reuses the previous answer while it is younger than that many
+    seconds.  It is 0 by default, so the voice tools and the tests always read
+    the player directly; only the polling web route opts in.
     """
+    if max_age > 0:
+        cached = _SNAPSHOT_CACHE.get(player)
+        if cached is not None and (time.monotonic() - cached[0]) < max_age:
+            return cached[1]
+    result = _read_snapshot(player)
+    if max_age > 0:
+        _SNAPSHOT_CACHE[player] = (time.monotonic(), result)
+    return result
+
+
+def _read_snapshot(player: str) -> Dict[str, Any]:
+    """The uncached read behind :func:`snapshot`."""
     if playerctl_path() is None:
         return {"available": False, "reason": INSTALL_HINT, "players": [], "count": 0}
 

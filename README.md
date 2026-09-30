@@ -185,6 +185,12 @@ Browser / forwarded port, and the startup banner prints your Pi's LAN address:
   network : http://192.168.1.42:8765/
 ```
 
+If VS Code answers `FastAPI is not installed` instead, it is running the system
+Python: pick `./.venv/bin/python` with `Ctrl+Shift+P` -> **Python: Select
+Interpreter**, or skip the guessing and use `sh scripts/run.sh` (it finds the
+venv itself), the `JARVIS: run web interface` task, or a fresh VS Code terminal -
+that one activates `.venv` for you.
+
 Open that address on your phone - same Wi-Fi, no app to install, *Add to Home
 Screen* for full-screen. To run it later without VS Code attached:
 
@@ -206,7 +212,7 @@ build step - the console is plain JavaScript served by Python.
 | core + voice + hardware + dev Python packages | everything in `requirements*.txt` | `sh scripts/setup-pi.sh --voice --hardware --dev` |
 | Debian audio/GPIO packages | only if the setup task reports they are missing | `sh scripts/setup-pi.sh --system` |
 | `playerctl` | music control from the console (optional) | `sudo apt install -y playerctl` |
-| VS Code extensions | Python, Pylance, debugpy, Ruff, TOML, YAML | VS Code offers them from `.vscode/extensions.json` |
+| VS Code extensions | Python, Pylance, debugpy, Ruff, TOML, YAML | the `code --install-extension` block below, or the *Recommended Extensions* popup |
 
 A fresh VS Code terminal on the Pi, start to finish:
 
@@ -222,6 +228,33 @@ sh scripts/setup-pi.sh --voice --hardware --dev
 .venv/bin/python main.py --check      # what is ready, what is still missing
 .venv/bin/python main.py              # run it: http://<pi-ip>:8765/
 ```
+
+**Already have VS Code open on the JARVIS folder?** Paste this to add every
+extension the project recommends in one go - they are the six entries in
+`.vscode/extensions.json`, and `--force` makes it safe to re-run:
+
+```bash
+code --install-extension ms-python.python --force
+code --install-extension ms-python.vscode-pylance --force
+code --install-extension ms-python.debugpy --force
+code --install-extension charliermarsh.ruff --force
+code --install-extension tamasfe.even-better-toml --force
+code --install-extension redhat.vscode-yaml --force
+```
+
+Same thing as one line, if you would rather not paste six commands:
+
+```bash
+for ext in ms-python.python ms-python.vscode-pylance ms-python.debugpy charliermarsh.ruff tamasfe.even-better-toml redhat.vscode-yaml; do code --install-extension "$ext" --force; done
+```
+
+No `code` command? You opened VS Code from the desktop menu on the Pi, so it is
+usually already on your PATH; if the shell says *command not found*, either run
+`code` from VS Code's own terminal (`Ctrl+` `) or click *Extensions -> `...` ->
+**Show Recommended Extensions*** and press **Install Workspace Recommended
+Extensions** - that installs the exact same six. None of them are required for
+JARVIS to run; they add autocomplete, the debugger (F5), the Ruff linter and
+syntax help for `.env`/YAML, which is why the repo recommends them.
 
 Nothing above is a hard requirement except Python and the Python packages:
 without `--voice`/`--hardware` JARVIS still runs (typed chat, no microphone),
@@ -913,17 +946,20 @@ first thing to run on the Pi.
 | Symptom | Cause and fix |
 |---|---|
 | Blank page in the browser | The page served but could not reach the brain. Start it with `.venv/bin/python main.py --web` and reload; the UI shows an offline banner in that case. |
-| `FastAPI is not installed` | `pip install -r requirements.txt` |
+| `FastAPI is not installed` | If the message also names a second interpreter and `.venv`, JARVIS was started with the system Python - pick the venv with *Python: Select Interpreter* (`./.venv/bin/python`), or run `.venv/bin/python main.py`. Otherwise: `pip install -r requirements.txt`. |
 | Assistant answers "I don't have an AI provider available" | No key is set and the keyless fallback is switched off. Add one key to `.env`, set `POLLINATIONS_ENABLED=true`, or start Ollama. `--check` names the exact variable each provider is missing. |
 | `I'm running offline right now` | Every provider failed or is cooling down. Check the internet, then press *reset provider cooldowns* in the status panel. |
 | Answers are slower or less private than expected | You are on the keyless fallback (`pollinations` lit in the *Ai core* panel). Add any provider key for a private, faster brain, or set `POLLINATIONS_ENABLED=false` to forbid the shared endpoint. |
 | Voice silent | Run `--check`. Install `pygame` (playback) and `edge-tts`, or `espeak-ng` for offline. |
 | `speech output : none` | No TTS engine installed. `pip install -r requirements-voice.txt`. |
 | Microphone not found | Install `pyaudio` and `portaudio19-dev`; check `arecord -l`. Try `STT_ENGINE=vosk` for offline. |
+| `Failed building wheel for PyAudio` | PyAudio has to be compiled, and PortAudio's C headers are missing. `sudo apt install -y portaudio19-dev python3-dev build-essential`, then `.venv/bin/pip install PyAudio` - or re-run the setup with `--system`. Everything else installs regardless, and talking through your phone's microphone still works without it. |
+| `Failed building wheel for lgpio` / `command 'swig' failed` | `lgpio` generates its C bindings with swig and links against lgpio's C library. `sudo apt-get install -y swig python3-dev build-essential liblgpio-dev`, then `.venv/bin/pip install lgpio` - or re-run the setup with `--system`. Until then `gpiozero` uses another backend, or the mock one. |
 | Assistant talks then answers its own voice | It should not - make sure `STT_ENABLED=true` so listening pauses while speaking. |
 | `email is not configured yet` | Set `EMAIL_ENABLED=true`, `SMTP_USER` and `SMTP_PASSWORD`. Gmail needs an **App Password**, not your normal password. |
 | Email login rejected | Gmail/Outlook require an app password or OAuth; a normal password will be refused. |
 | Image generation failed | Needs internet (Pollinations) or `OPENAI_API_KEY`. |
+| `token rejected - reopen the page with the correct ?token=` | `JARVIS_WEB_TOKEN` is set, so every request must carry it. Find the value in `.env`, then open the console once as `http://<pi-ip>:8765/?token=<value>` - the tab remembers it. To run without a token on a home network, blank that line in `.env` and restart. |
 | `media control needs playerctl` | `sudo apt install playerctl`, then reload. The rest of JARVIS is unaffected meanwhile. |
 | "nothing is playing ... nothing to control" | Start a song or a video first - MPRIS can only control a player that is running. |
 | "Spotify refused ... needs Premium" | Spotify's Web API will not start playback on a free account. Playing, pausing and skipping through MPRIS still work. |
@@ -934,6 +970,7 @@ first thing to run on the Pi.
 | Search returns nothing useful | Your IP may be blocked by DuckDuckGo. Add `TAVILY_API_KEY` or `BRAVE_API_KEY`. |
 | Everything is slow | See the performance notes below; usually it is thermal throttling or an SD card. |
 | `Unable to open X display` with `--gui` | No graphical session. Use the web interface instead. |
+| Debugger stops on `SystemExit: 1` at `sys.exit(main())` | `main()` exited with a failure code, and the reason is printed in the terminal a few lines above that exception. The usual one is a busy port: `Port 8765 is already in use` means a JARVIS instance is already running - open it, or stop it with `sh scripts/cloud.sh --stop`, or start this one with `--port 8766`. |
 | Want a fresh start | Stop JARVIS and delete `data/memory.json` and `data/ChatLog.json`. |
 
 Logs rotate in `logs/jarvis.log` and are also visible live in the status panel.
@@ -949,6 +986,10 @@ Logs rotate in `logs/jarvis.log` and are also visible live in the status panel.
   board comfortable.
 - **Animations are cheap.** The UI animates only `transform`/`opacity`, honours
   `prefers-reduced-motion`, and ships no web fonts or images.
+- **Idle cost is small.** State is pushed over the WebSocket (the 20 s poll is
+  only a fallback), the clock ticks once a second, and the now-playing read is
+  cached for a few seconds - so an idle Pi does not fork `playerctl` on every
+  poll. Ask it for the CPU temperature any time: `read the cpu temperature`.
 - **Memory is bounded.** Conversation window, fact store, chat log, voice cache
   and HTTP response sizes all have caps.
 - **Nothing is lazy if it costs RAM at import.** `psutil`, `gpiozero`, `vosk`,

@@ -52,6 +52,28 @@ PIP="$VENV_DIR/bin/pip"
 PYBIN="$VENV_DIR/bin/python"
 [ -x "$PIP" ] || { echo "could not find $PIP"; exit 1; }
 
+# --- install a requirements file one package at a time ----------------------
+# `pip install -r` is all-or-nothing: the moment one line has to be compiled
+# from source and the toolchain is incomplete - PyAudio needs PortAudio's
+# headers, lgpio needs swig - pip discards the whole batch, including the
+# packages that already had ARM wheels waiting.  Going line by line means one
+# stubborn package costs only itself, and we can name it with the apt fix.
+SKIPPED=""
+pip_one_by_one() {
+  file=$1
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    pkg=$(printf '%s' "${raw%%#*}" | sed 's/[[:space:]]*$//')
+    [ -n "$pkg" ] || continue
+    name=${pkg%%[<>=!]*}
+    if "$PIP" install --quiet "$pkg"; then
+      echo "   ok      $name"
+    else
+      echo "   missing $name"
+      SKIPPED="$SKIPPED $name"
+    fi
+  done < "$file"
+}
+
 echo "-> upgrading pip"
 "$PIP" install --quiet --upgrade pip
 
@@ -60,16 +82,39 @@ echo "-> installing core requirements"
 
 if [ "$WANT_VOICE" = "1" ]; then
   echo "-> installing voice requirements"
-  echo "   (if PyAudio fails, run: sudo apt install -y portaudio19-dev flac mpg123 espeak-ng)"
-  if ! "$PIP" install -r requirements-voice.txt; then
-    echo "! voice extras did not all install - JARVIS will still work without them"
+  SKIPPED=""
+  pip_one_by_one requirements-voice.txt
+  if [ -n "$SKIPPED" ]; then
+    echo "! voice packages not installed:$SKIPPED"
+    case " $SKIPPED " in
+      *" PyAudio "*)
+        echo "  PyAudio is the microphone. It compiles against PortAudio's C headers:"
+        echo "     sudo apt install -y portaudio19-dev python3-dev build-essential"
+        echo "     $PIP install PyAudio"
+        ;;
+    esac
+    echo "  JARVIS still runs; type instead of talking until then."
+  else
+    echo "   every voice package installed"
   fi
 fi
 
 if [ "$WANT_HARDWARE" = "1" ]; then
   echo "-> installing hardware requirements"
-  if ! "$PIP" install -r requirements-hardware.txt; then
-    echo "! hardware extras did not install - the mock GPIO backend will be used"
+  SKIPPED=""
+  pip_one_by_one requirements-hardware.txt
+  if [ -n "$SKIPPED" ]; then
+    echo "! hardware packages not installed:$SKIPPED"
+    case " $SKIPPED " in
+      *" lgpio "*)
+        echo "  lgpio generates its C bindings with swig and links against lgpio's C library:"
+        echo "     sudo apt-get install -y swig python3-dev build-essential liblgpio-dev"
+        echo "     $PIP install lgpio"
+        ;;
+    esac
+    echo "  gpiozero falls back to another GPIO backend, or to the mock one."
+  else
+    echo "   every hardware package installed"
   fi
 fi
 

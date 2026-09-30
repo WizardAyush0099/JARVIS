@@ -410,12 +410,14 @@ def create_app(settings: Optional[Settings] = None, jarvis: Optional[Jarvis] = N
         """What is playing on this machine right now (MPRIS, via playerctl).
 
         Read straight from the media player, so the console can show the real
-        track - and say honestly when there is nothing to show.
+        track - and say honestly when there is nothing to show.  Cached for a
+        few seconds, because the console polls this and every poll is three
+        playerctl processes on a very small computer.
         """
         require_token(request, x_jarvis_token, token)
-        from tools.media import snapshot
+        from tools.media import SNAPSHOT_TTL, snapshot
 
-        return await asyncio.to_thread(snapshot, player)
+        return await asyncio.to_thread(snapshot, player, SNAPSHOT_TTL)
 
     @app.post("/api/media", response_class=JSONResponse)
     async def api_media_control(

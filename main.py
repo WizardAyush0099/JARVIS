@@ -245,6 +245,7 @@ def run_doctor(settings: Any) -> int:
         print("Result: ready. Start it with:  python main.py")
     else:
         print("Result: problems found above. Fix them, then run --check again.")
+        print(virtualenv_hint(), end="")
     print("Next steps:")
     print("  1. copy env.example to .env and add at least one AI provider key")
     print(f"  2. python main.py            (web interface on port {settings.web.port})")
@@ -255,11 +256,60 @@ def run_doctor(settings: Any) -> int:
 # --------------------------------------------------------------------------- #
 # modes
 # --------------------------------------------------------------------------- #
+def virtualenv_hint() -> str:
+    """Explain the system-Python mistake, when that is what happened.
+
+    "FastAPI is not installed" on a machine where it clearly *is* installed means
+    ``main.py`` was started with ``/usr/bin/python`` instead of the project's
+    virtual environment - VS Code's Run button does exactly that until an
+    interpreter has been selected, and so does a bare ``python main.py`` in a
+    fresh terminal.  Naming both interpreters turns a dead end into a one-line
+    fix, so every message about a missing package carries it.
+    """
+    # ``sys.prefix != sys.base_prefix`` is the canonical "am I in a virtual
+    # environment" test, and it is the one that works here: .venv/bin/python is a
+    # symlink to the system interpreter, so comparing the two paths *resolved*
+    # would find them identical and stay silent about the very mistake it exists
+    # to name.  Any virtual environment counts as fine - only the bare system
+    # Python is worth blaming.
+    if sys.prefix != sys.base_prefix:
+        return ""
+    venv = PROJECT_ROOT / ".venv" / "bin" / "python"
+    try:
+        if not venv.exists():
+            return ""
+    except OSError:  # pragma: no cover - defensive
+        return ""
+    return (
+        f"Looks like the wrong Python: this is {sys.executable}, but the packages\n"
+        f"are installed in {venv}.\n"
+        "Start JARVIS with the virtual environment:  .venv/bin/python main.py\n"
+    )
+
+
+def port_is_busy(host: str, port: int) -> bool:
+    """True when something is already listening on this port.
+
+    uvicorn answers a taken port with ``sys.exit(1)``, which reaches a debugger
+    as a bare "SystemExit: 1" and tells you nothing about the cause.  Asking
+    before we hand over lets us say what is actually wrong - almost always a
+    JARVIS instance that is already running.
+    """
+    probe_host = host if host and host not in ("0.0.0.0", "::", "*") else "127.0.0.1"
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.settimeout(0.4)
+            return probe.connect_ex((probe_host, int(port))) == 0
+    except OSError:  # pragma: no cover - defensive
+        return False
+
+
 def run_web(settings: Any, args: argparse.Namespace) -> int:
     try:
         from server.app import HAVE_FASTAPI, lan_address, serve
     except Exception as exc:  # noqa: BLE001
         print(f"Could not load the web server: {exc}")
+        print(virtualenv_hint(), end="")
         return 1
     if not HAVE_FASTAPI:
         print(
@@ -267,6 +317,7 @@ def run_web(settings: Any, args: argparse.Namespace) -> int:
             "Install the required packages:  pip install -r requirements.txt\n"
             "Or use one of the other front-ends:  python main.py --gui | --cli"
         )
+        print(virtualenv_hint(), end="")
         return 1
 
     print(BANNER)
@@ -277,6 +328,19 @@ def run_web(settings: Any, args: argparse.Namespace) -> int:
         print("  a token is required (JARVIS_WEB_TOKEN is set)")
     else:
         print("  tip: set JARVIS_WEB_TOKEN in .env before exposing this on a network")
+
+    port = int(settings.web.port)
+    if port_is_busy(settings.web.host, port):
+        print(
+            f"\nPort {port} is already in use, so this instance cannot start.\n"
+            f"If JARVIS is already running there is nothing to do - open it:\n"
+            f"  http://localhost:{port}/\n"
+            f"Otherwise, find and stop whatever holds the port:\n"
+            f"  sh scripts/cloud.sh --stop   # a JARVIS started in the background\n"
+            f"  ss -ltnp | grep {port}       # any other process"
+        )
+        return 1
+
     print("\nPress Ctrl+C to stop.\n")
     try:
         serve(settings, open_browser=settings.web.open_browser)
@@ -324,8 +388,53 @@ def run_gui(settings: Any, args: argparse.Namespace) -> int:
     return 0
 
 
+def reexec_in_project_venv(venv_python: Optional[Path] = None) -> None:
+    """Hand over to the project's virtual environment when started outside it.
+
+    ``python main.py`` on the system Python - and VS Code's Run button before an
+    interpreter has been picked - both stop at "FastAPI is not installed" while
+    the packages sit unused in ``.venv``.  Re-running this same script with the
+    venv's interpreter makes every way of starting JARVIS work, not only the ones
+    that remember to name the venv.  ``os.execve`` keeps the process, the
+    terminal and the signals, so the exit code and ``Ctrl+C`` behave as before.
+
+    Three guards, because this replaces the running process:
+
+    * already inside a virtual environment - nothing to hand over to;
+    * ``JARVIS_REEXEC=1`` in the environment - the hand-over already happened,
+      so an empty venv can never loop (set it to keep the interpreter you chose);
+    * a debugger is attached - replacing the process would drop its breakpoints,
+      so ``main.py --help``-style debugging stays the interpreter's business.
+    """
+    if os.environ.get("JARVIS_REEXEC") == "1" or sys.prefix != sys.base_prefix:
+        return
+    if sys.gettrace() is not None:
+        return
+    if venv_python is None:
+        venv_python = PROJECT_ROOT / ".venv" / "bin" / "python"
+    venv_python = Path(venv_python)
+    try:
+        if not venv_python.exists():
+            return
+    except OSError:  # pragma: no cover - defensive
+        return
+
+    argv = [str(venv_python), os.path.abspath(sys.argv[0] or "main.py")]
+    argv.extend(sys.argv[1:])
+    env = dict(os.environ)
+    env["JARVIS_REEXEC"] = "1"
+    print(f"-> switching to the project environment: {venv_python}")
+    sys.stdout.flush()
+    try:
+        os.execve(str(venv_python), argv, env)
+    except OSError as exc:  # pragma: no cover - defensive
+        print(f"(could not switch to {venv_python}: {exc})")
+
+
 # --------------------------------------------------------------------------- #
 def main(argv: Optional[List[str]] = None) -> int:
+    if argv is None:  # the real command line, not a library call
+        reexec_in_project_venv()
     parser = build_parser()
     args = parser.parse_args(argv)
 

@@ -429,7 +429,16 @@
       headers: headers,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     }).then(function (response) {
-      if (response.status === 401) throw new Error("token rejected - reopen the page with the correct ?token=");
+      if (response.status === 401) {
+        // Say where the token actually lives: "reopen with ?token=" on its own
+        // is a dead end for anyone who has never set one.
+        throw new Error(
+          "token rejected - this JARVIS is protected. Its token is JARVIS_WEB_TOKEN in .env " +
+            "(or leave that line empty for no token). Open http://" +
+            window.location.host +
+            "/?token=... once and this tab remembers it."
+        );
+      }
       if (!response.ok) {
         return response.json().catch(function () { return {}; }).then(function (data) {
           throw new Error(data.detail || ("request failed (" + response.status + ")"));
@@ -631,6 +640,13 @@
     if (node && node.parentNode) node.parentNode.removeChild(node);
   }
 
+  /** "Built by Ayush." - the "for Ayush" half only appears when it is someone else. */
+  function creditText(creator, owner) {
+    var who = creator || owner || "";
+    if (!creator || creator === owner) return "Built by " + who + ".";
+    return "Built by " + creator + " for " + owner + ".";
+  }
+
   function seedIntro() {
     clearThread();
     var article = document.createElement("article");
@@ -640,8 +656,8 @@
       '<div class="hero" aria-hidden="true"><span class="hero-ring"></span>' +
       '<span class="hero-ring hero-ring-2"></span><span class="hero-core">J</span></div>' +
       "<p><strong>" + escapeHtml(identity.assistant) + "</strong> is online.</p>" +
-      '<p class="muted" id="intro-credit">Built by <strong>' + escapeHtml(identity.creator) +
-      "</strong> for " + escapeHtml(identity.owner) + ".</p>" +
+      '<p class="muted" id="intro-credit">' +
+      escapeHtml(creditText(identity.creator, identity.owner)) + "</p>" +
       '<p class="muted">Type a message, press <strong>Mic</strong> to talk, or start ' +
       "<strong>Live Talk</strong> for a hands-free conversation.</p>" +
       '<div class="suggestions" id="suggestions">' +
@@ -1741,7 +1757,7 @@
       $("intro-name").textContent = who.assistant;
       var credit = $("intro-credit");
       if (credit) {
-        credit.textContent = "Built by " + identity.creator + " for " + identity.owner + ".";
+        credit.textContent = creditText(identity.creator, identity.owner);
       }
       $("brand-sub").textContent = "personal ai · " + identity.owner;
     }
@@ -2047,8 +2063,8 @@
       });
     });
 
-    // Delegated on the document, because the suggestion chips live both in the
-    // intro message and in the quick-command bar.
+    // Delegated on the document: the suggestion chips are built at runtime in
+    // the intro message, so there is nothing stable to bind them to.
     document.addEventListener("click", function (event) {
       var target = /** @type {HTMLElement} */ (event.target);
       if (!target || !target.closest) return;

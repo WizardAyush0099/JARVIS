@@ -32,6 +32,12 @@ def _unquote(value: str) -> str:
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
         return value[1:-1]
+    if value.startswith("#"):
+        # `KEY=   # comment` means "left empty", not "set to this comment".
+        # python-dotenv reads it the other way, so relying on it would quietly
+        # turn a documented placeholder into a live value - which is how a fresh
+        # install ended up demanding ?token=# set to require ?token=...
+        return ""
     if " #" in value:  # trailing inline comment on an unquoted value
         value = value.split(" #", 1)[0]
     return value.strip()
@@ -59,6 +65,12 @@ def parse_env_file(path: Path) -> Dict[str, str]:
 
 def load_dotenv(root: Path = PROJECT_ROOT, override: bool = False) -> List[str]:
     """Load ``.env`` then ``.env.local``.  Returns the files that were found."""
+    # Captured *before* python-dotenv runs, on purpose.  python-dotenv reads
+    # ``KEY=   # comment`` as a value made of comment text; when it loaded first
+    # and we treated its result as "already in the environment", its reading won
+    # and our own, stricter parse below never got a chance to correct it.
+    preexisting = set(os.environ)
+
     # python-dotenv does the same job; use it when the user already has it.
     try:  # pragma: no cover - optional dependency
         from dotenv import load_dotenv as _dotenv_load  # type: ignore
@@ -70,7 +82,7 @@ def load_dotenv(root: Path = PROJECT_ROOT, override: bool = False) -> List[str]:
     except Exception:
         pass
 
-    preexisting = set(os.environ)
+    merged: Dict[str, str] = {}
     merged: Dict[str, str] = {}
     found: List[str] = []
     for name in (".env", ".env.local"):
