@@ -16,6 +16,13 @@
 # --- web interface ---------------------------------------------------------
 fastapi>=0.110,<1.0
 uvicorn>=0.27,<1.0
+# WebSocket support for the live console (/ws pushes state, voice and tool
+# progress instead of making the page poll).  Without it uvicorn logs
+# "No supported WebSocket library detected" and the console silently drops to
+# its slower fallback.  `uvicorn[standard]` would also work - websockets alone
+# is the smaller download and has a pure-python fallback, so it cannot fail to
+# build on a Pi.
+websockets>=12.0
 
 # --- configuration ---------------------------------------------------------
 python-dotenv>=1.0

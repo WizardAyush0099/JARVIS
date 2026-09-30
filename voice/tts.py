@@ -53,8 +53,23 @@ def detect_language(text: str) -> str:
     return "en"
 
 
-def clean_for_speech(text: str) -> str:
-    """Strip things that sound terrible when spoken aloud."""
+#: How much of a long answer is read out loud.  A wall of text spoken aloud is
+#: slow to synthesize, slow to listen to and impossible to follow, and the whole
+#: reply is on screen anyway - so speech gets the opening sentence or two and
+#: says where the rest is.  0 reads everything.
+DEFAULT_SPEAK_LIMIT = 240
+
+#: Appended to the spoken form of an answer that was too long to read in full.
+SPOKEN_TAIL = "I've put the rest on screen."
+
+
+def clean_for_speech(text: str, limit: int = 0) -> str:
+    """Strip things that sound terrible when spoken aloud.
+
+    ``limit`` (in characters, 0 = no limit) shortens the result: a long answer is
+    cut at the last sentence break that fits, and closed with
+    :data:`SPOKEN_TAIL` so nobody is left thinking the answer ended there.
+    """
     import re
 
     spoken = text or ""
@@ -62,10 +77,42 @@ def clean_for_speech(text: str) -> str:
     spoken = re.sub(r"`([^`]*)`", r"\1", spoken)
     spoken = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", spoken)  # markdown links
     spoken = re.sub(r"https?://\S+", "the link I've shown you", spoken)
+    # a heading is its own sentence when it is read aloud, not a run-on
+    spoken = re.sub(r"^\s*#{1,6}\s*(.+?)\s*$", r"\1. ", spoken, flags=re.M)
     spoken = re.sub(r"[*_#>|]", " ", spoken)
     spoken = re.sub(r"^\s*[-•]\s*", "", spoken, flags=re.M)
     spoken = re.sub(r"\s+", " ", spoken)
-    return spoken.strip()
+    spoken = re.sub(r"\s+([:,;.!?])", r"\1", spoken)  # "Launch :" -> "Launch:"
+    return _shorten_for_speech(spoken.strip(), limit)
+
+
+def _shorten_for_speech(spoken: str, limit: int) -> str:
+    """Cut ``spoken`` down to ``limit`` characters without breaking a word."""
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        return spoken
+    if limit <= 0 or len(spoken) <= limit:
+        return spoken
+
+    head = spoken[:limit]
+    # prefer to stop where a sentence ends, as long as that still leaves most of
+    # the budget used - cutting off two thirds of the way through anyway is worse
+    # than a shorter, complete sentence
+    cut = max(
+        head.rfind(". "),
+        head.rfind("! "),
+        head.rfind("? "),
+        head.rfind("\u0964 "),  # the Devanagari danda
+    )
+    if cut >= limit // 2:
+        head = head[: cut + 1]
+    else:
+        space = head.rfind(" ")
+        if space > 0:
+            head = head[:space]
+        head = head.rstrip(" ,;:-") + "."
+    return f"{head} {SPOKEN_TAIL}".strip()
 
 
 # --------------------------------------------------------------------------- #
@@ -422,6 +469,12 @@ class Speaker:
         #: cleaned text -> audio file already produced this run, so a repeated
         #: sentence costs nothing on any engine (and no network call on edge)
         self._path_cache: Dict[str, Path] = {}
+        #: how much of a long answer is read aloud (see clean_for_speech)
+        limit = getattr(settings.tts, "speak_limit", DEFAULT_SPEAK_LIMIT)
+        try:
+            self.speak_limit = max(0, int(limit))
+        except (TypeError, ValueError):  # pragma: no cover - defensive
+            self.speak_limit = DEFAULT_SPEAK_LIMIT
         self.spoken_count = 0
         self.failures = 0
         self.last_error = ""
@@ -497,6 +550,7 @@ class Speaker:
             "available": self.available,
             "synthesis_available": self.synthesis_available,
             "local_output": self._local_output,
+            "speak_limit": self.speak_limit,
             "speaking": self.speaking,
             "queued": self._queue.qsize(),
             "spoken": self.spoken_count,
@@ -541,7 +595,7 @@ class Speaker:
         client is what plays it.  Returns ``None`` when the voice is muted or no
         engine can produce audio.
         """
-        spoken = clean_for_speech(text)
+        spoken = clean_for_speech(text, self.speak_limit)
         if not spoken or self._muted or isinstance(self.engine, NullEngine):
             return None
         path = self._synthesize(spoken)
@@ -562,7 +616,7 @@ class Speaker:
     # -- speaking ----------------------------------------------------------
     def speak(self, text: str, on_done: Optional[Callable[[], None]] = None) -> bool:
         """Queue text for speech.  Returns False when speech is impossible."""
-        spoken = clean_for_speech(text)
+        spoken = clean_for_speech(text, self.speak_limit)
         if not spoken or self._muted or not self._local_output or isinstance(self.engine, NullEngine):
             if on_done:
                 try:
@@ -575,7 +629,7 @@ class Speaker:
 
     def say_now(self, text: str) -> bool:
         """Blocking variant used by tools/tests."""
-        spoken = clean_for_speech(text)
+        spoken = clean_for_speech(text, self.speak_limit)
         if not spoken or self._muted or isinstance(self.engine, NullEngine):
             return False
         return self._utter(spoken)
@@ -663,5 +717,7 @@ __all__ = [
     "build_sink",
     "build_speaker",
     "clean_for_speech",
+    "DEFAULT_SPEAK_LIMIT",
+    "SPOKEN_TAIL",
     "detect_language",
 ]

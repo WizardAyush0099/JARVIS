@@ -132,6 +132,7 @@ def run_doctor(settings: Any) -> int:
     packages = [
         ("fastapi", "fastapi", "web interface", True),
         ("uvicorn", "uvicorn", "web server", True),
+        ("websockets", "websockets", "live console updates (WebSocket)", False),
         ("dotenv", "python-dotenv", ".env support", False),
         ("psutil", "psutil", "accurate system metrics", False),
         ("speech_recognition", "speech_recognition", "microphone input", False),

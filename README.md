@@ -900,7 +900,7 @@ Everything is optional and lives in `.env` (see [`env.example`](env.example)).
 | `SEARCH_PROVIDER` | `duckduckgo` | `duckduckgo` / `tavily` / `brave` / `searxng` |
 | `IMAGE_PROVIDER` | `pollinations` | `pollinations` or `openai` |
 | `EMAIL_ENABLED`, `SMTP_*`, `EMAIL_AUTO_SEND` | `false`, …, `false` | SMTP sending |
-| `TTS_ENABLED`, `TTS_ENGINE`, `TTS_VOICE_EN`, `TTS_VOICE_HI`, `TTS_RATE` | `true`, `edge`, … | speech output |
+| `TTS_ENABLED`, `TTS_ENGINE`, `TTS_VOICE_EN`, `TTS_VOICE_HI`, `TTS_RATE`, `TTS_SPEAK_LIMIT` | `true`, `edge`, … | speech output - `TTS_SPEAK_LIMIT` is how many characters of a long answer are spoken (240 by default, `0` reads all of it) |
 | `STT_ENABLED`, `STT_ENGINE`, `STT_WAKE_WORD`, `VOSK_MODEL_PATH` | `false`, `google`, `jarvis` | speech input |
 | `JARVIS_WEB_HOST`, `JARVIS_WEB_PORT`, `JARVIS_WEB_TOKEN` | `0.0.0.0`, `8765`, – | web interface (`PORT` from the environment wins, for containers) |
 | `JARVIS_VOICE_OUTPUT` | `device` | where replies are spoken: `device`, `browser` or `off` |
@@ -947,11 +947,12 @@ first thing to run on the Pi.
 |---|---|
 | Blank page in the browser | The page served but could not reach the brain. Start it with `.venv/bin/python main.py --web` and reload; the UI shows an offline banner in that case. |
 | `FastAPI is not installed` | If the message also names a second interpreter and `.venv`, JARVIS was started with the system Python - pick the venv with *Python: Select Interpreter* (`./.venv/bin/python`), or run `.venv/bin/python main.py`. Otherwise: `pip install -r requirements.txt`. |
+| `No supported WebSocket library detected` | Live console updates need a WebSocket implementation. `.venv/bin/pip install websockets` (or `uvicorn[standard]`), then restart. Until then the console still works - it just falls back to polling, so state and voice arrive a few seconds late. |
 | Assistant answers "I don't have an AI provider available" | No key is set and the keyless fallback is switched off. Add one key to `.env`, set `POLLINATIONS_ENABLED=true`, or start Ollama. `--check` names the exact variable each provider is missing. |
 | `I'm running offline right now` | Every provider failed or is cooling down. Check the internet, then press *reset provider cooldowns* in the status panel. |
 | Answers are slower or less private than expected | You are on the keyless fallback (`pollinations` lit in the *Ai core* panel). Add any provider key for a private, faster brain, or set `POLLINATIONS_ENABLED=false` to forbid the shared endpoint. |
 | Voice silent | Run `--check`. Install `pygame` (playback) and `edge-tts`, or `espeak-ng` for offline. |
-| `speech output : none` | No TTS engine installed. `pip install -r requirements-voice.txt`. |
+| `speech output : none` | No TTS engine is installed, so the console can only type. `sh scripts/setup-pi.sh --voice`, then **restart JARVIS** - the engine is chosen at start-up. Only the microphone needs PyAudio; speech output does not, and the browser plays the audio, so the Pi needs no sound card for it. `espeak-ng` is the offline voice, `edge-tts` the natural one. |
 | Microphone not found | Install `pyaudio` and `portaudio19-dev`; check `arecord -l`. Try `STT_ENGINE=vosk` for offline. |
 | `Failed building wheel for PyAudio` | PyAudio has to be compiled, and PortAudio's C headers are missing. `sudo apt install -y portaudio19-dev python3-dev build-essential`, then `.venv/bin/pip install PyAudio` - or re-run the setup with `--system`. Everything else installs regardless, and talking through your phone's microphone still works without it. |
 | `Failed building wheel for lgpio` / `command 'swig' failed` | `lgpio` generates its C bindings with swig and links against lgpio's C library. `sudo apt-get install -y swig python3-dev build-essential liblgpio-dev`, then `.venv/bin/pip install lgpio` - or re-run the setup with `--system`. Until then `gpiozero` uses another backend, or the mock one. |

@@ -548,6 +548,10 @@ class TTSSettings:
     rate: int = -8
     volume: float = 0.9
     cache_dir: str = ""
+    #: characters of a long answer that are spoken.  A wall of text read aloud is
+    #: slow to synthesize and impossible to follow, so speech gets the opening
+    #: sentence or two and points at the screen for the rest.  0 speaks it all.
+    speak_limit: int = 240
     #: where spoken replies come out:
     #:   device  - this machine's speakers (CLI, desktop window)
     #:   browser - the web client plays the audio the backend synthesized
@@ -717,6 +721,7 @@ class Settings:
                 voice_hi=env("TTS_VOICE_HI", "hi-IN-MadhurNeural"),
                 rate=env_int("TTS_RATE", -8),
                 volume=env_float("TTS_VOLUME", 0.9),
+                speak_limit=env_int("TTS_SPEAK_LIMIT", 240),
                 voice_output=env("JARVIS_VOICE_OUTPUT", "device").lower(),
             ),
             stt=STTSettings(
