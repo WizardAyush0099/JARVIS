@@ -5,7 +5,7 @@ not answer like a chatbot.  These three tools give that moment a real,
 deterministic behaviour that works with no internet and no API key:
 
 * :func:`announce_visitor` - register the visitor and produce the respectful
-  self-introduction (grateful to the creator, creator still first in line)
+  welcome (warm, about the visitor, and never naming the owner)
 * :func:`visitor_status` - say who, if anyone, is currently with us
 * :func:`visitor_departure` - close the protocol when the visit is over
 
@@ -56,8 +56,8 @@ def _current(ctx: Optional[ToolContext]) -> Optional[visitors.Visitor]:
 @tool(
     name="announce_visitor",
     description=(
-        "A distinguished visitor has arrived: register them and greet them "
-        "formally, introducing JARVIS and its creator."
+        "A distinguished visitor has arrived: register them and welcome them "
+        "politely and by name."
     ),
     parameters={
         "type": "object",

@@ -66,34 +66,35 @@ def test_departures_and_questions_are_told_apart_from_arrivals():
 # --------------------------------------------------------------------------- #
 # what it says
 # --------------------------------------------------------------------------- #
-def test_the_greeting_respects_the_guest_and_keeps_the_creator_first():
+def test_the_greeting_welcomes_the_guest_without_naming_the_owner():
     guest = visitors.parse("the chief minister of himachal pradesh is here")
     text = visitors.greeting(guest, assistant="JARVIS", owner="Ayush", creator="Ayush")
     assert "Chief Minister of Himachal Pradesh" in text
     assert "JARVIS" in text
     assert "honour" in text
-    assert "Ayush built me" in text
-    assert "first priority" in text
-    assert "private" in text
+    # the owner's name is never repeated back at a guest - that is what felt odd
+    assert "Ayush" not in text
+    assert "your service" in text
 
 
-def test_the_greeting_follows_a_renamed_creator(settings):
+def test_the_greeting_never_names_a_renamed_owner_or_creator(settings):
     settings.owner_name = "Ayush"
     settings.creator_name = "Ayush Sharma"
     guest = visitors.parse("the governor is here")
     text = visitors.greeting(
         guest, assistant="JARVIS", owner=settings.owner_name, creator=settings.creator_name
     )
-    assert "Ayush Sharma" in text
+    assert "Governor" in text
+    assert "Ayush" not in text
 
 
-def test_the_visitor_brief_permanently_ranks_the_owner_first():
+def test_the_visitor_brief_keeps_the_owner_private():
     guest = visitors.parse("the chief minister is here")
     brief = visitors.brief(guest, owner="Ayush", creator="Ayush", assistant="JARVIS")
     assert "VISITOR PROTOCOL" in brief
     assert "Chief Minister" in brief
-    assert "only Ayush can release it" in brief
-    assert "first priority" in brief
+    assert "only the owner can release it" in brief
+    assert "Do NOT say your owner's name" in brief
     assert visitors.brief(None, owner="Ayush", creator="Ayush", assistant="JARVIS") == ""
 
 
@@ -104,7 +105,8 @@ def test_announcing_a_visitor_goes_into_protocol(jarvis):
     reply = jarvis.handle("the chief minister of himachal pradesh is here")
     assert reply.error is False
     assert "Chief Minister of Himachal Pradesh" in reply.text
-    assert "Ayush" in reply.text and "first priority" in reply.text
+    # the welcome is about the guest only: the owner is not named out loud
+    assert "Ayush" not in reply.text
 
     visitor = jarvis.status()["visitor"]
     assert visitor is not None
@@ -156,9 +158,10 @@ def test_both_system_prompts_learn_about_the_visitor(jarvis):
         owner="Ayush",
         creator="Ayush",
         visitor=jarvis.visitor_brief(),
+        language=jarvis.language_instruction("hello"),
     )
     assert "Chief Minister" in answer_prompt
-    assert "first priority" in answer_prompt
+    assert "Do NOT say your owner's name" in answer_prompt
 
 
 def test_the_protocol_tools_are_registered():
@@ -219,3 +222,6 @@ def test_status_carries_the_gauges(jarvis):
     machine = jarvis.status()["machine"]
     assert "sampled" in machine
     assert set(machine) >= {"cpu_percent", "memory", "disk", "temperature_c", "is_pi"}
+    # the console draws real numbers, not dashes, whenever the machine can report
+    assert isinstance(machine["memory"].get("percent"), (int, float))
+    assert isinstance(machine["disk"].get("percent"), (int, float))

@@ -30,6 +30,7 @@ from core.events import (
     STATE_WORKING,
     EventBus,
 )
+from core import language
 from core.logging_setup import get_logger
 from core.memory import Memory
 from core.planner import Plan, PlanStep, Planner
@@ -54,13 +55,17 @@ You are writing the final reply for {owner}. You have just run tools; their real
 results are below and you must answer from them.
 {visitor}
 
+{language}
+
 Rules:
+- Answer in the language named above. If the user wrote in Hindi, answer in Hindi; if they wrote in Hinglish (Hindi in Latin letters), answer in Hinglish.
 - Never claim something succeeded if its result says FAILED. Report the failure plainly and, if it is fixable, say what to change.
 - Do not paste raw tool output or JSON. Turn it into natural speech.
 - Include concrete details that matter: file paths, URLs, numbers, error messages.
 - When you searched the web, mention that the information is from a live search and name the sources.
 - Be sharp and confident: lead with the answer, then the one detail that matters most. Skip throat-clearing, restating the question, and generic advice.
 - Keep it short - two to five sentences unless the request needs more.
+- While a visitor-protocol block is present above, keep the identity rules private: never name your owner or creator unless the visitor asks you directly.
 - Never mention that you were given a prompt, a plan or a system message."""
 
 
@@ -117,6 +122,7 @@ class Jarvis:
         self._stopped = False
 
         self.memory = Memory(settings, self.events)
+        self._restore_language()
         self.offline = OfflineEngine(settings, self.memory, self.events)
         self.ai = ProviderManager(settings, self.events, offline_engine=self.offline)
         #: CPU / memory / temperature gauges for the console, sampled off-thread
@@ -246,6 +252,38 @@ class Jarvis:
             assistant=self.settings.assistant_name,
         )
 
+    # -- language -----------------------------------------------------------
+    def _restore_language(self) -> None:
+        """Re-apply the language the user picked last time, if the .env is auto."""
+        if language.normalise(getattr(self.settings, "language", "")) in language.CODES:
+            return
+        try:
+            stored = language.normalise(self.memory.facts().get("language", ""))
+        except Exception:  # pragma: no cover - defensive
+            stored = ""
+        if stored in language.CODES:
+            self.settings.language = stored
+
+    @property
+    def language(self) -> str:
+        """The user's chosen language, or "auto" to follow the message."""
+        return str(getattr(self.settings, "language", language.AUTO) or language.AUTO)
+
+    def set_language(self, code: str) -> str:
+        """Remember the language the user asked for ("auto" clears it)."""
+        chosen = language.normalise(code) or language.AUTO
+        self.settings.language = chosen
+        try:
+            self.memory.remember("language", chosen)
+        except Exception:  # a preference must never break a turn
+            log.debug("could not store the language preference")
+        self.events.publish("language", message=f"language {chosen}", language=chosen)
+        return chosen
+
+    def language_instruction(self, message: str = "") -> str:
+        """Prompt block telling the model which language to answer in."""
+        return language.instruction(message, self.language)
+
     # ------------------------------------------------------------------ #
     # main entry point
     # ------------------------------------------------------------------ #
@@ -259,6 +297,14 @@ class Jarvis:
             self.events.set_state(STATE_THINKING)
             self.memory.add_user(request, source=source)
             self.events.publish("message", role="user", text=request, source=source)
+
+            # "speak in hindi" / "hinglish me bolo" is a standing preference, not
+            # a question - handle it before anything else and confirm in the new
+            # language.
+            wanted = language.command(request)
+            if wanted:
+                self.set_language(wanted)
+                return self._finish(language.confirmation(wanted), source=source)
 
             pending = self._pending
             if pending is not None:
@@ -385,18 +431,27 @@ class Jarvis:
                 "Write the reply now."
             )
             try:
-                return self.ai.chat(
+                composed = self.ai.chat(
                     [*context, {"role": "user", "content": prompt}],
                     system=ANSWER_SYSTEM.format(
                         assistant=self.settings.assistant_name,
                         owner=self.settings.owner_name,
                         creator=self.creator,
                         visitor=self.visitor_brief(),
+                        language=self.language_instruction(request),
                     ),
                     max_tokens=self.settings.ai.max_tokens,
                 )
             except Exception as exc:  # noqa: BLE001
                 log.warning("could not compose with AI, falling back: %s", exc)
+            else:
+                if getattr(self.ai, "last_provider", "") != "offline":
+                    return composed
+                # Every online provider failed and the chain fell through to the
+                # local rule engine.  Its prose would bury the real tool results
+                # (and repeat the "add an API key" notice), so answer from the
+                # results themselves instead.
+                log.info("online providers unavailable; answering from tool results")
 
         return self._answer_offline(results, bool(failures))
 
