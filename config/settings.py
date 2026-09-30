@@ -20,7 +20,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -157,10 +157,16 @@ class ProviderConfig:
     free_tier: bool = True
     docs: str = ""
     requires_key: bool = False
+    #: environment variable that carries the key (name only - never the value)
+    key_env: str = ""
+    #: answers without a key at all (a public endpoint we can fall back to)
+    keyless: bool = False
+    #: per-provider retry budget; -1 means "use AI_MAX_RETRIES"
+    retries: int = -1
 
     @property
     def configured(self) -> bool:
-        return self.local or bool(self.api_key)
+        return self.local or self.keyless or bool(self.api_key)
 
     @property
     def usable(self) -> bool:
@@ -250,6 +256,41 @@ PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         key_env="DEEPSEEK_API_KEY",
         docs="https://platform.deepseek.com/api_keys",
     ),
+    "nvidia": dict(
+        label="NVIDIA NIM",
+        kind="openai",
+        base_url="https://integrate.api.nvidia.com/v1",
+        model="meta/llama-3.3-70b-instruct",
+        key_env="NVIDIA_API_KEY",
+        docs="https://build.nvidia.com",
+    ),
+    "huggingface": dict(
+        label="Hugging Face",
+        kind="openai",
+        base_url="https://router.huggingface.co/v1",
+        model="meta-llama/Llama-3.3-70B-Instruct",
+        key_env="HF_TOKEN",
+        docs="https://huggingface.co/settings/tokens",
+    ),
+    "xai": dict(
+        label="xAI",
+        kind="openai",
+        base_url="https://api.x.ai/v1",
+        model="grok-4",
+        key_env="XAI_API_KEY",
+        free_tier=False,
+        docs="https://console.x.ai",
+    ),
+    "lmstudio": dict(
+        label="LM Studio (local)",
+        kind="openai",
+        base_url="http://localhost:1234/v1",
+        model="",
+        key_env="",
+        local=True,
+        enable_env="LMSTUDIO_ENABLED",
+        docs="https://lmstudio.ai",
+    ),
     "ollama": dict(
         label="Ollama (local)",
         kind="openai",
@@ -257,7 +298,23 @@ PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         model="llama3.2",
         key_env="",
         local=True,
+        enable_env="OLLAMA_ENABLED",
         docs="https://ollama.com",
+    ),
+    # Keyless public endpoint (Pollinations). Use it only as the very last
+    # online resort - and note that anything you send it leaves the machine.
+    "pollinations": dict(
+        label="Pollinations (keyless)",
+        kind="openai",
+        base_url="https://text.pollinations.ai/openai",
+        model="openai",
+        key_env="",
+        keyless=True,
+        enable_env="POLLINATIONS_ENABLED",
+        enabled_by_default=True,
+        timeout=20.0,
+        retries=0,
+        docs="https://pollinations.ai",
     ),
     "offline": dict(
         label="Offline engine",
@@ -287,22 +344,36 @@ def _preset_slug_from_overrides() -> List[str]:
     return extra
 
 
+def preset_is_enabled(slug: str, preset: Mapping[str, Any]) -> bool:
+    """Is this provider switched on by the environment?
+
+    Local engines (Ollama, LM Studio) are only probed when the user says they
+    run them.  Keyless cloud endpoints default to *on*, because answering with
+    no key at all is the entire point of them.
+    """
+    enable_env = preset.get("enable_env")
+    if not enable_env:
+        return True
+    return env_bool(str(enable_env), bool(preset.get("enabled_by_default", False)))
+
+
 def resolve_providers(timeout: float = 45.0) -> List[ProviderConfig]:
     """Build the provider fallback chain.
 
     Order: explicitly listed providers first, then any other provider that has
-    credentials (so setting a key is enough to make it a usable fallback), and
-    finally the always-present ``offline`` engine.
+    credentials (so setting a key is enough to make it a usable fallback), then
+    the keyless public endpoints, and finally the always-present ``offline``
+    engine.  A keyless provider therefore only ever runs when nothing better
+    answered - which is what keeps JARVIS alive when every quota runs out.
     """
     raw = env("AI_PROVIDERS", ",".join(DEFAULT_PROVIDER_ORDER))
     listed = [name for name in re.split(r"[,\s]+", raw) if name]
 
-    ollama_enabled = env_bool("OLLAMA_ENABLED", False)
     order: List[str] = []
     for name in listed:
         slug = name.lower()
-        if slug == "ollama" and not ollama_enabled:
-            continue  # only probed when the user says they run it
+        if not preset_is_enabled(slug, PROVIDER_PRESETS.get(slug, {})):
+            continue  # a switched-off or local engine is never probed
         order.append(slug)
 
     known = list(PROVIDER_PRESETS) + _preset_slug_from_overrides()
@@ -312,13 +383,22 @@ def resolve_providers(timeout: float = 45.0) -> List[ProviderConfig]:
         preset = PROVIDER_PRESETS.get(slug, {})
         if preset.get("local"):
             # local engines are only probed when explicitly enabled
-            if slug == "ollama" and ollama_enabled:
+            if preset_is_enabled(slug, preset):
                 order.append(slug)
             continue
+        if preset.get("keyless"):
+            continue  # appended last, behind every credentialed provider
         key_env = preset.get("key_env", "")
         has_key = bool(key_env and env(key_env)) or bool(env(f"{slug.upper()}_API_KEY"))
         if has_key:
             order.append(slug)
+
+    for slug, preset in PROVIDER_PRESETS.items():
+        if slug in order or slug == "offline" or not preset.get("keyless"):
+            continue
+        if preset_is_enabled(slug, preset):
+            order.append(slug)
+
     if "offline" not in order:
         order.append("offline")
 
@@ -350,10 +430,13 @@ def resolve_providers(timeout: float = 45.0) -> List[ProviderConfig]:
                 model=model,
                 api_key=key,
                 local=local,
-                timeout=timeout,
+                timeout=float(preset.get("timeout", timeout)),
                 free_tier=bool(preset.get("free_tier", True)),
                 docs=preset.get("docs", ""),
                 requires_key=bool(preset.get("key_env")),
+                key_env=preset.get("key_env", ""),
+                keyless=bool(preset.get("keyless")),
+                retries=int(preset.get("retries", -1)),
             )
         )
     return providers
@@ -370,6 +453,32 @@ class AISettings:
     timeout: float = 45.0
     max_retries: int = 2
     history_turns: int = 12
+
+
+@dataclass
+class SpotifySettings:
+    """Optional Spotify Web API link (liked songs, search, real playback control).
+
+    MPRIS (``tools/media.py``) already covers play/pause/skip for whatever is
+    playing and needs none of this.  These credentials add the things only a
+    vendor API can answer: your **liked songs**, and starting a *specific*
+    track, artist or playlist.
+    """
+
+    client_id: str = field(default="", repr=False)
+    client_secret: str = field(default="", repr=False)
+    refresh_token: str = field(default="", repr=False)
+    market: str = ""  # optional country code, e.g. "IN"
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.client_id and self.client_secret and self.refresh_token)
+
+    @property
+    def partial(self) -> bool:
+        """Some, but not all, of the three values are set."""
+        present = [bool(self.client_id), bool(self.client_secret), bool(self.refresh_token)]
+        return any(present) and not all(present)
 
 
 @dataclass
@@ -504,6 +613,7 @@ class Settings:
     creator_name: str = "Ayush"
     language: str = "auto"
     ai: AISettings = field(default_factory=AISettings)
+    spotify: SpotifySettings = field(default_factory=SpotifySettings)
     search: SearchSettings = field(default_factory=SearchSettings)
     image: ImageSettings = field(default_factory=ImageSettings)
     email: EmailSettings = field(default_factory=EmailSettings)
@@ -552,6 +662,12 @@ class Settings:
             owner_name=env("JARVIS_OWNER", "Ayush"),
             creator_name=env("JARVIS_CREATOR", env("JARVIS_OWNER", "Ayush")),
             language=env("JARVIS_LANGUAGE", "auto").lower(),
+            spotify=SpotifySettings(
+                client_id=env("SPOTIFY_CLIENT_ID"),
+                client_secret=env("SPOTIFY_CLIENT_SECRET"),
+                refresh_token=env("SPOTIFY_REFRESH_TOKEN"),
+                market=env("SPOTIFY_MARKET"),
+            ),
             ai=AISettings(
                 providers=resolve_providers(timeout=timeout),
                 temperature=env_float("AI_TEMPERATURE", 0.4),
@@ -659,12 +775,14 @@ class Settings:
                     "configured": p.configured,
                     "usable": p.usable,
                     "requires_key": p.requires_key,
+                    "keyless": p.keyless,
                     "free_tier": p.free_tier,
                     "docs": p.docs,
                 }
                 for p in self.ai.providers
             ],
             "search": {"provider": self.search.active, "max_results": self.search.max_results},
+            "spotify": {"linked": self.spotify.configured, "partial": self.spotify.partial},
             "image": {"provider": self.image.provider, "size": [self.image.width, self.image.height]},
             "email": {"enabled": self.email.configured, "auto_send": self.email.auto_send},
             "tts": {"enabled": self.tts.enabled, "engine": self.tts.engine},
@@ -684,7 +802,9 @@ __all__ = [
     "ProviderConfig",
     "load_dotenv",
     "parse_env_file",
+    "preset_is_enabled",
     "resolve_providers",
+    "SpotifySettings",
     "env",
     "env_bool",
     "env_float",

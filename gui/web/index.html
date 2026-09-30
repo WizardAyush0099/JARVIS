@@ -22,6 +22,7 @@
       <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
     </div>
     <p class="boot-note" id="boot-note">booting core &middot; linking to the local brain</p>
+    <ul class="boot-log" id="boot-log" aria-hidden="true"></ul>
   </div>
 </div>
 
@@ -61,6 +62,7 @@
   <div class="pills" id="pills">
     <span class="pill" id="pill-state" data-tone="idle"><i></i><span>idle</span></span>
     <span class="pill" id="pill-brain" data-tone="muted"><i></i><span>brain</span></span>
+    <span class="pill" id="pill-brains" data-tone="muted" title="How many brains can answer right now, out of the whole fallback chain"><i></i><span>brains</span></span>
     <span class="pill" id="pill-mic" data-tone="muted"><i></i><span>mic</span></span>
     <span class="pill" id="pill-voice" data-tone="muted"><i></i><span>voice</span></span>
     <span class="pill" id="pill-link" data-tone="warn"><i></i><span>linking</span></span>
@@ -118,11 +120,13 @@
 
     <div class="core-stage">
       <div class="reactor" id="reactor" aria-hidden="true">
+        <canvas id="core-canvas" width="360" height="360"></canvas>
         <span class="reactor-glow"></span>
         <span class="reactor-ring reactor-ring-1"></span>
         <span class="reactor-ring reactor-ring-2"></span>
         <span class="reactor-ring reactor-ring-3"></span>
         <span class="reactor-ticks"></span>
+        <span class="reactor-sweep"></span>
         <span class="reactor-core"></span>
       </div>
       <div class="core-meta">
@@ -137,6 +141,22 @@
     <div class="state-strip">
       <span class="state-label" id="state-label">connecting</span>
       <span class="state-note muted small" id="state-note"></span>
+    </div>
+
+    <!-- engine bank: every brain that can answer right now, lit up -->
+    <div class="engines" id="engines" role="status" aria-live="polite">
+      <span class="engines-label micro">engines</span>
+      <div class="engines-list" id="engines-list">
+        <span class="engine" data-tone="off">linking&hellip;</span>
+      </div>
+      <span class="engines-note" id="engines-note"></span>
+    </div>
+
+    <div class="trace" id="trace-strip" aria-live="polite">
+      <span class="trace-label micro">cognition trace</span>
+      <ol class="trace-list" id="trace-list">
+        <li class="trace-empty">waiting for the first signal</li>
+      </ol>
     </div>
 
     <div id="visitor" class="visitor hidden" role="status">
@@ -187,6 +207,8 @@
       <button class="chip" data-fill="read the cpu temperature">cpu temp</button>
       <button class="chip" data-fill="what can you do">capabilities</button>
       <button class="chip" data-fill="remember my project is called Athena">remember</button>
+      <button class="chip" data-fill="play some music">play music</button>
+      <button class="chip" data-fill="what is playing">now playing</button>
       <button class="chip" data-fill="the guest has left">stand down</button>
     </div>
 
@@ -271,8 +293,13 @@
       </section>
 
       <section class="block" id="block-core">
-        <h3>Ai core &middot; providers</h3>
-        <ul class="list" id="provider-list"></ul>
+        <h3>Ai core &middot; fallback chain</h3>
+        <div class="chain-head">
+          <span class="stat">brains <b id="chain-ready">&mdash;</b></span>
+          <span class="stat">chain <b id="chain-total">&mdash;</b></span>
+        </div>
+        <p class="chain-note" id="chain-note">checking the chain&hellip;</p>
+        <ol class="chain" id="chain"></ol>
         <button class="btn ghost small" id="btn-reset-providers">reset provider cooldowns</button>
       </section>
 
@@ -284,6 +311,35 @@
           <button type="button" class="seg-btn" id="btn-out-device" aria-pressed="false">the device</button>
         </div>
         <p class="muted small" id="voice-note"></p>
+      </section>
+
+      <section class="block" id="block-media">
+        <h3>Media &middot; now playing</h3>
+        <div class="now-playing" id="now-playing">
+          <span class="np-disc" aria-hidden="true"><i></i></span>
+          <div class="np-text">
+            <span class="np-title" id="media-title">checking&hellip;</span>
+            <span class="np-meta" id="media-meta">&mdash;</span>
+          </div>
+        </div>
+        <div class="transport" id="transport" role="group" aria-label="Media transport">
+          <button type="button" class="ctl compact" data-media="previous" aria-label="Previous track" title="Previous track">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6v12L9 12z"/><path d="M6 5v14"/></svg>
+          </button>
+          <button type="button" class="ctl compact" id="btn-media-toggle" data-media="toggle" aria-label="Play or pause" title="Play or pause">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg>
+          </button>
+          <button type="button" class="ctl compact" data-media="next" aria-label="Next track" title="Next track">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6v12l10-6z"/><path d="M18 5v14"/></svg>
+          </button>
+          <button type="button" class="ctl compact" data-media="volume-down" aria-label="Quieter" title="Quieter">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Z"/><path d="M16 12h5"/></svg>
+          </button>
+          <button type="button" class="ctl compact" data-media="volume-up" aria-label="Louder" title="Louder">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Z"/><path d="M16 12h5"/><path d="M18.5 9.5v5"/></svg>
+          </button>
+        </div>
+        <p class="muted small" id="media-note">Play, pause and skip whatever is on this machine - Spotify, a YouTube video in the browser, VLC.</p>
       </section>
 
       <section class="block" id="block-memory">

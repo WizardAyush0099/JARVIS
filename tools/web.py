@@ -551,6 +551,99 @@ def youtube_search(
     return ToolResult.success(f"YouTube search for '{text}': {url}", data={"url": url})
 
 
+#: YouTube video ids are exactly 11 URL-safe characters, and the first one on a
+#: results page belongs to the top result for that query.
+_YT_ID = re.compile(r'"videoId":"([A-Za-z0-9_-]{11})"')
+_YT_URL_ID = re.compile(r"[?&]v=([A-Za-z0-9_-]{11})")
+
+
+def _youtube_first_video(query: str, timeout: float = 12.0) -> Optional[str]:
+    """Resolve a query to the id of its top YouTube result, keylessly.
+
+    YouTube's own results page is the primary source (the first ``videoId`` in the
+    page data is the top result).  If that page is blocked or changes shape, the
+    same keyless search chain JARVIS already uses is asked for a watch link
+    instead, so this degrades rather than breaking.
+    """
+    try:
+        markup = request_text(
+            with_query("https://www.youtube.com/results", {"search_query": query}),
+            headers={"User-Agent": BROWSER_UA, "Accept-Language": "en-US,en;q=0.9"},
+            timeout=timeout,
+            retries=1,
+            max_bytes=3 * 1024 * 1024,
+        )
+    except HttpError as exc:
+        log.debug("youtube results page failed: %s", exc)
+        markup = ""
+
+    match = _YT_ID.search(markup or "")
+    if match:
+        return match.group(1)
+
+    for item in run_search(f"site:youtube.com/watch {query}", None, 5, timeout=timeout):
+        found = _YT_URL_ID.search(str(item.get("url", "")))
+        if found:
+            return found.group(1)
+    return None
+
+
+@tool(
+    name="youtube_play",
+    description=(
+        "Play a specific YouTube video: find the top result for a query and open it "
+        "directly (not just the search page). Use 'youtube_search' to browse results instead."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "what to watch; empty opens YouTube itself"},
+        },
+        "required": ["query"],
+    },
+    category="web",
+    aliases=("play_video", "play_youtube", "watch_video"),
+)
+def youtube_play(query: str, open_in_browser: bool = True, ctx: Optional[ToolContext] = None) -> ToolResult:
+    text = (query or "").strip()
+    if not text:
+        from tools.system import open_url
+
+        opened = open_url("https://www.youtube.com")
+        return ToolResult.success(
+            "Opened YouTube." if opened.ok else "Here's YouTube: https://www.youtube.com",
+            data={"url": "https://www.youtube.com"},
+        )
+
+    video_id = _youtube_first_video(text)
+    if not video_id:
+        # Nothing found: fall back to the results page rather than guessing a video.
+        fallback = with_query("https://www.youtube.com/results", {"search_query": text})
+        if open_in_browser:
+            from tools.system import open_url
+
+            open_url(fallback)
+        return ToolResult.failure(
+            f"I couldn't pick a single video for '{text}', so I opened the results instead: {fallback}"
+        )
+
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    if not open_in_browser:
+        return ToolResult.success(f"Top result for '{text}': {url}", data={"url": url, "video_id": video_id})
+
+    from tools.system import open_url
+
+    opened = open_url(url)
+    message = f"Playing the top result for '{text}' on YouTube."
+    if opened.ok:
+        # Browsers require a gesture before media may start on their own, so be
+        # straight about it instead of claiming sound is already coming out.
+        message += " If the browser blocks autoplay, press play - then 'pause' and 'next' work on it."
+    else:
+        message = f"I couldn't open a browser. Here's the video: {url}"
+    return ToolResult.success(message, data={"url": url, "video_id": video_id})
+
+
 @tool(
     name="weather",
     description="Current weather and a short forecast for a place (no API key needed).",
@@ -608,4 +701,4 @@ def weather(location: str = "", ctx: Optional[ToolContext] = None) -> ToolResult
     return ToolResult.success("\n".join(lines), data={"location": place_name, "now": now})
 
 
-__all__ = ["html_to_text", "run_search", "weather"]
+__all__ = ["html_to_text", "run_search", "weather", "youtube_play"]

@@ -60,6 +60,8 @@
     browserMic: true,
     micProbed: false,
     warnedNoMic: false,
+    warnedNoProvider: false,
+    warnedKeyless: false,
   };
 
   // A reply arrives twice when the socket is healthy: once in the HTTP response
@@ -115,6 +117,186 @@
         weekday: "short", day: "2-digit", month: "short", year: "numeric",
       });
     }
+  }
+
+  /* ---------------------------------------------------------------- core */
+  // The neural core - JARVIS's face.  A particle field on a canvas that is
+  // driven *only* by real state: the microphone level while listening, a firing
+  // synapse web while thinking, sonar rings while speaking.  Deliberately
+  // cheap: no shadows, no blur, no filters, ~40fps, and nothing at all when the
+  // tab is hidden or the visitor asked for reduced motion.
+  var core = (function () {
+    var canvas = /** @type {HTMLCanvasElement|null} */ ($("core-canvas"));
+    var ctx = canvas ? canvas.getContext("2d") : null;
+    var nodes = [];
+    var mode = "idle";
+    var level = 0;
+    var wave = 0;
+    var raf = null;
+    var last = 0;
+    var dpr = 1;
+    var reduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    // each state gets its own colour family, so the core reads at a glance
+    var TINTS = {
+      idle: [188, 205],
+      listening: [148, 168],
+      thinking: [34, 48],
+      working: [34, 48],
+      speaking: [252, 272],
+      error: [352, 368],  // wraps past 360, staying in the reds
+
+    };
+
+    function grow() {
+      var width = window.innerWidth;
+      var count = width < 620 ? 22 : width < 1100 ? 32 : 46;
+      nodes = [];
+      for (var i = 0; i < count; i++) {
+        nodes.push({
+          angle: Math.random() * Math.PI * 2,
+          orbit: 0.26 + Math.random() * 0.44,
+          speed: 0.0011 + Math.random() * 0.0026,
+          size: 0.9 + Math.random() * 1.7,
+          drift: Math.random() * Math.PI * 2,
+          fire: 0,
+        });
+      }
+    }
+
+    function resize() {
+      if (!canvas || !ctx) return;
+      var box = canvas.getBoundingClientRect();
+      var side = Math.max(90, Math.round(box.width || canvas.clientWidth || 180));
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.round(side * dpr);
+      canvas.height = Math.round(side * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      last = 0;
+    }
+
+    function tint() {
+      var pair = TINTS[mode] || TINTS.idle;
+      return pair[0] + Math.random() * (pair[1] - pair[0]);
+    }
+
+    function render(dt) {
+      if (!ctx || !canvas) return;
+      var side = canvas.clientWidth || 180;
+      var middle = side / 2;
+      var radius = middle * 0.94;
+      ctx.clearRect(0, 0, side, side);
+
+      var busy = mode === "thinking" || mode === "working";
+      var lively = mode === "listening";
+      var speed = busy ? 3.1 : mode === "speaking" ? 1.9 : lively ? 1.35 : 0.7;
+      var push = lively ? Math.min(1, level * 2.4) : 0;
+      var wobble = busy ? radius * 0.035 : 0;
+
+      // sonar rings: one per ~450ms of speech, honest to the audio that plays
+      if (mode === "speaking") {
+        wave = (wave + dt * 0.021) % 1;
+        for (var w = 0; w < 3; w++) {
+          var reach = ((wave + w / 3) % 1);
+          ctx.beginPath();
+          ctx.strokeStyle = "hsla(" + tint() + ", 92%, 74%, " + (0.34 * (1 - reach)).toFixed(3) + ")";
+          ctx.lineWidth = 1.2;
+          ctx.arc(middle, middle, radius * (0.3 + reach * 0.68), 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
+      var points = [];
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        node.angle += node.speed * speed * dt;
+        node.fire = Math.max(0, node.fire - dt * 0.045);
+        // a fresh spark every so often keeps it alive without being noisy
+        if (Math.random() < (busy ? 0.05 : 0.012)) node.fire = 1;
+        var orbit = node.orbit + push * 0.09 + Math.sin(node.drift + node.angle * 3) * 0.012;
+        var x = middle + Math.cos(node.angle) * radius * orbit;
+        var y = middle + Math.sin(node.angle) * radius * orbit * 0.98;
+        if (wobble) {
+          x += (Math.random() - 0.5) * wobble;
+          y += (Math.random() - 0.5) * wobble;
+        }
+        points.push([x, y]);
+        var alpha = 0.28 + node.fire * 0.62 + push * 0.25;
+        ctx.beginPath();
+        ctx.fillStyle = "hsla(" + (tint() - node.fire * 6) + ", 95%, " + (58 + node.fire * 30) + "%, " + Math.min(1, alpha).toFixed(3) + ")";
+        ctx.arc(x, y, node.size + node.fire * 1.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // while thinking, nearby sparks link up: the network literally forming
+      if (busy) {
+        ctx.lineWidth = 0.7;
+        for (var a = 0; a < points.length; a++) {
+          for (var b = a + 1; b < points.length; b++) {
+            var dx = points[a][0] - points[b][0];
+            var dy = points[a][1] - points[b][1];
+            var gap = dx * dx + dy * dy;
+            if (gap > 2100) continue;
+            ctx.strokeStyle = "hsla(42, 96%, 72%, " + (0.26 * (1 - gap / 2100)).toFixed(3) + ")";
+            ctx.beginPath();
+            ctx.moveTo(points[a][0], points[a][1]);
+            ctx.lineTo(points[b][0], points[b][1]);
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    function tick(ts) {
+      raf = null;
+      if (document.hidden) return;
+      var dt = last ? Math.min(3, Math.max(0.35, (ts - last) / 16.7)) : 1;
+      last = ts;
+      render(dt);
+      schedule();
+    }
+
+    function schedule() {
+      if (reduced || raf !== null || document.hidden) return;
+      raf = requestAnimationFrame(tick);
+    }
+
+    function setMode(name) {
+      mode = name || "idle";
+      if (reduced) render(1);
+      else schedule();
+    }
+
+    resize();
+    grow();
+    render(1);
+    schedule();
+    window.addEventListener("resize", function () { resize(); grow(); render(1); });
+    document.addEventListener("visibilitychange", function () {
+      last = 0;
+      if (!document.hidden) schedule();
+    });
+
+    return {
+      setMode: setMode,
+      setLevel: function (value) { level = Math.max(0, Math.min(1, value || 0)); },
+    };
+  })();
+
+  /* ---------------------------------------------------------------- trace */
+  // The pipeline narrating itself, in order, with real timings.  Only ever fed
+  // by what the backend actually reported - never by a guess.
+  var TRACE_MAX = 4;
+
+  function pushTrace(text, tone) {
+    var list = $("trace-list");
+    if (!list || !text) return;
+    var empty = list.querySelector(".trace-empty");
+    if (empty) list.removeChild(empty);
+    var item = document.createElement("li");
+    if (tone) item.setAttribute("data-tone", tone);
+    item.innerHTML = "<b>" + clock() + "</b> " + escapeHtml(text);
+    list.appendChild(item);
+    while (list.children.length > TRACE_MAX) list.removeChild(list.firstChild);
   }
 
   /* ---------------------------------------------------------------- boot */
@@ -288,6 +470,7 @@
     var changed = name !== state.lastState;
     state.lastState = name;
     document.body.setAttribute("data-state", name);
+    core.setMode(name);
     var tone = "idle";
     if (name === "listening") tone = "ok";
     else if (name === "thinking" || name === "working") tone = "busy";
@@ -300,7 +483,10 @@
     if (mission) mission.textContent = MISSION[name] || name;
     var coreMode = $("core-mode");
     if (coreMode) coreMode.textContent = shown;
-    if (changed) pushFeed("state · " + shown);
+    if (changed) {
+      pushFeed("state · " + shown);
+      pushTrace(shown, name === "error" ? "warn" : (name === "thinking" || name === "working" ? "busy" : ""));
+    }
   }
 
   function setPill(pill, text, tone) {
@@ -460,7 +646,8 @@
       "<strong>Live Talk</strong> for a hands-free conversation.</p>" +
       '<div class="suggestions" id="suggestions">' +
       ['system status', "what time is it", "search for Raspberry Pi 5 news",
-        "generate an image of a futuristic city at night", "list my hardware devices",
+        "generate an image of a futuristic city at night", "what is playing",
+        "play some music", "list my hardware devices",
         "remember my project is called Athena"].map(function (text) {
         return '<button class="chip" data-fill="' + escapeHtml(text) + '">' + escapeHtml(text) + "</button>";
       }).join("") +
@@ -471,37 +658,265 @@
   var identity = { assistant: "JARVIS", owner: "Ayush", creator: "Ayush" };
 
   /* ---------------------------------------------------------------- panel */
-  function renderProviders(providers) {
-    var list = $("provider-list");
-    list.innerHTML = "";
-    (providers || []).forEach(function (item) {
-      var li = document.createElement("li");
-      var dot = document.createElement("span");
-      var tone = "off";
-      if (item.status === "ready") tone = "ok";
-      else if (item.status === "cooling" || item.status === "degraded") tone = "busy";
-      else if (item.status === "error") tone = "warn";
-      dot.className = "dot " + tone;
-      var name = document.createElement("span");
-      name.className = "name";
-      name.textContent = item.label || item.slug;
-      var meta = document.createElement("span");
-      meta.className = "meta";
-      var detail = item.model || "";
-      if (item.status === "cooling") detail += " · " + Math.round(item.cooldown_s) + "s";
-      else if (item.status === "not configured") detail = "add a key";
-      else if (item.successes) detail += " · " + item.successes + " ok";
-      meta.textContent = detail;
-      li.appendChild(dot);
-      li.appendChild(name);
-      li.appendChild(meta);
-      list.appendChild(li);
-    });
-    if (!list.children.length) {
-      var empty = document.createElement("li");
-      empty.textContent = "no providers configured";
-      list.appendChild(empty);
+  var CHAIN_TONE = {
+    ready: "ok", cooling: "busy", degraded: "busy", error: "warn", "not configured": "off",
+  };
+
+  /** What one node is doing, in one line.  Never invents a number. */
+  function describeProvider(item) {
+    var bits = [];
+    if (item.model) bits.push(item.model);
+    if (item.status === "cooling") bits.push("cooling " + Math.round(item.cooldown_s) + "s");
+    else if (item.status === "degraded") bits.push(String(item.last_error || "failing").slice(0, 42));
+    else if (item.status === "error") bits.push("unavailable");
+    else {
+      if (item.last_latency_ms) bits.push(item.last_latency_ms + "ms");
+      if (item.successes) bits.push(item.successes + " ok");
     }
+    return bits.join(" · ");
+  }
+
+  /**
+   * The fallback chain as a live circuit: wires top to bottom, the brain that
+   * is answering now lit up, and every missing key one click from its fix.
+   * This is what makes JARVIS's redundancy visible instead of a claim.
+   */
+  function renderProviders(providers, active) {
+    var chain = $("chain");
+    if (!chain) return;
+    providers = providers || [];
+    chain.innerHTML = "";
+    var ready = 0;
+    var missing = 0;
+
+    providers.forEach(function (item) {
+      var tone = CHAIN_TONE[item.status] || "off";
+      if (item.status === "ready") ready += 1;
+      if (item.status === "not configured") missing += 1;
+
+      var node = document.createElement("li");
+      node.className = "node";
+      node.setAttribute("data-tone", tone);
+      if (item.slug === active && tone === "ok") node.setAttribute("data-active", "true");
+
+      var dot = document.createElement("span");
+      dot.className = "node-dot";
+      node.appendChild(dot);
+
+      var name = document.createElement("span");
+      name.className = "node-name";
+      name.textContent = item.label || item.slug;
+      node.appendChild(name);
+
+      var meta = document.createElement("span");
+      meta.className = "node-meta";
+      meta.textContent = describeProvider(item);
+      node.appendChild(meta);
+
+      if (item.status === "not configured" && item.requires_key && item.docs) {
+        var link = document.createElement("a");
+        link.className = "node-key";
+        link.href = item.docs;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "get key";
+        link.title = "Open this provider's key page, then add the key in Settings \u2192 Environment";
+        node.appendChild(link);
+      } else if (item.keyless) {
+        node.appendChild(flagChip("no key needed"));
+      } else if (item.local) {
+        node.appendChild(flagChip("local"));
+      }
+      chain.appendChild(node);
+    });
+
+    if (!chain.children.length) {
+      var empty = document.createElement("li");
+      empty.className = "node";
+      empty.setAttribute("data-tone", "off");
+      empty.textContent = "no providers configured";
+      chain.appendChild(empty);
+    }
+
+    var readyNode = $("chain-ready");
+    if (readyNode) readyNode.textContent = String(ready);
+    var totalNode = $("chain-total");
+    if (totalNode) totalNode.textContent = String(providers.length);
+
+    var note = $("chain-note");
+    if (note) {
+      note.textContent = missing
+        ? missing + (missing === 1 ? " brain is" : " brains are") + " one key away. " +
+          "Every extra key is another lifeline: JARVIS never has to say no because one quota ran out."
+        : "Every brain in the chain is armed. Failover runs top to bottom, so the next node " +
+          "answers before you ever notice a hiccup.";
+    }
+  }
+
+  function flagChip(text) {
+    var chip = document.createElement("span");
+    chip.className = "node-flag";
+    chip.textContent = text;
+    return chip;
+  }
+
+  /**
+   * The engine bank: one chip per brain that can answer right now.  It reads the
+   * same provider list as the chain, so it can never claim a brain the chain
+   * shows as unarmed - it just puts the redundancy where you actually look.
+   */
+  function renderEngines(providers, active) {
+    var list = $("engines-list");
+    if (!list) return;
+    providers = providers || [];
+    var ready = providers.filter(function (item) { return item.status === "ready"; });
+    list.innerHTML = "";
+
+    if (!ready.length) {
+      var none = document.createElement("span");
+      none.className = "engine";
+      none.setAttribute("data-tone", "off");
+      none.textContent = "offline rules only";
+      list.appendChild(none);
+      setEnginesNote("no key armed \u00b7 add one in Settings \u2192 Environment");
+      return;
+    }
+
+    ready.forEach(function (item) {
+      var chip = document.createElement("span");
+      chip.className = "engine";
+      chip.setAttribute("data-tone", item.keyless ? "keyless" : (item.local ? "off" : "ok"));
+      if (item.slug === active) chip.classList.add("is-active");
+      chip.title = (item.label || item.slug) +
+        (item.model ? " \u00b7 " + item.model : "") +
+        (item.keyless ? " \u00b7 no key needed (public endpoint)" : "");
+
+      var name = document.createElement("b");
+      name.textContent = item.slug;
+      chip.appendChild(name);
+
+      if (item.keyless) {
+        var tag = document.createElement("span");
+        tag.className = "engine-tag";
+        tag.textContent = "keyless";
+        chip.appendChild(tag);
+      }
+      list.appendChild(chip);
+    });
+
+    var extra = ready.length - 1;
+    setEnginesNote(extra > 0
+      ? extra + (extra === 1 ? " spare brain" : " spare brains") + " armed"
+      : "single brain answering");
+  }
+
+  function setEnginesNote(text) {
+    var note = $("engines-note");
+    if (note) note.textContent = text;
+  }
+
+  /* ---------------------------------------------------------------- media */
+  // Now playing, read from this machine's media player over MPRIS.  The console
+  // shows the real track - or says plainly that nothing is on.  It never invents
+  // a title, and the transport buttons do exactly what they claim.
+  var ICON_PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg>';
+  var ICON_PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>';
+  var PLAYERCTL_HINT = "Install playerctl on the machine running JARVIS to control music from here: " +
+    "sudo apt install playerctl";
+
+  function renderMedia(state) {
+    state = state || {};
+    var playing = !!state.playing;
+    document.body.setAttribute("data-media", playing ? "playing" : "idle");
+
+    var title = $("media-title");
+    var meta = $("media-meta");
+    var note = $("media-note");
+    if (state.available) {
+      if (title) title.textContent = state.title || "unknown track";
+      var bits = [];
+      if (state.artist) bits.push(state.artist);
+      if (state.album) bits.push(state.album);
+      if (state.status) bits.push(state.status);
+      if (state.player) bits.push("on " + state.player);
+      if (meta) meta.textContent = bits.join(" \u00b7 ");
+    } else {
+      var reason = String(state.reason || "start a song or a video");
+      if (title) title.textContent = "nothing playing";
+      if (meta) meta.textContent = reason.slice(0, 140);
+      if (note) {
+        note.textContent = /playerctl/i.test(reason)
+          ? PLAYERCTL_HINT
+          : "Start a song or a video on this machine (Spotify, a browser tab, VLC) and I can control it from here.";
+      }
+    }
+
+    var toggle = $("btn-media-toggle");
+    if (toggle) {
+      toggle.innerHTML = playing ? ICON_PAUSE : ICON_PLAY;
+      toggle.setAttribute("aria-label", playing ? "Pause" : "Play");
+      toggle.setAttribute("title", playing ? "Pause" : "Play");
+    }
+  }
+
+  function refreshMedia() {
+    if (document.hidden) return Promise.resolve(null);
+    return api("/api/media").then(renderMedia).catch(function () { return null; });
+  }
+
+  function mediaAction(action) {
+    return api("/api/media", { method: "POST", body: { action: action } })
+      .then(function (payload) {
+        renderMedia(payload.now);
+        pushFeed("media \u00b7 " + action + (payload.ok ? "" : " refused"), payload.ok ? "ok" : "warn");
+        if (!payload.ok) addMessage("system", "Media: " + payload.message);
+        return payload;
+      })
+      .catch(function (error) { addMessage("system", "Media: " + error.message); });
+  }
+
+  /* ---------------------------------------------------------- boot readout */
+  // The boot screen finishes by printing what is actually true about this
+  // machine, taken straight from the first real snapshot.
+  var bootLinesShown = false;
+
+  function renderBootLog(payload) {
+    var list = $("boot-log");
+    if (!list || bootLinesShown) return;
+    bootLinesShown = true;
+
+    var status = (payload && payload.status) || {};
+    var settings = (payload && payload.settings) || {};
+    var providers = status.providers || [];
+    var ready = providers.filter(function (item) { return item.status === "ready"; });
+    var missing = providers.filter(function (item) { return item.status === "not configured"; });
+    var mic = status.mic || {};
+    var speech = status.speech || {};
+    var memory = status.memory || {};
+    var machine = status.machine || {};
+    var envFiles = settings.env_files || [];
+
+    var lines = [
+      ["brains", ready.length + " ready" + (missing.length ? " · " + missing.length + " one key away" : "")],
+      ["brain", ready.length ? (ready[0].label || ready[0].slug) : "offline engine (no key set)"],
+      ["tools", (status.tools || 0) + " registered"],
+      ["memory", (memory.turns || 0) + " turns · " + (memory.facts || 0) + " facts"],
+      ["voice", (speech.engine || "none") + " \u2192 " + (status.voice_output || "device")
+        + (mic.engine && mic.engine !== "none" ? " · mic " + mic.engine : " · no microphone")],
+      ["machine", (machine.host || "unknown") + " · " + (machine.board || (machine.is_pi ? "raspberry pi" : "generic"))],
+      ["config", envFiles.length ? envFiles.join(", ") : "none (env.example is the template)"],
+    ];
+
+    list.innerHTML = "";
+    lines.forEach(function (pair) {
+      var item = document.createElement("li");
+      var key = document.createElement("b");
+      key.textContent = pair[0] + " ";
+      item.appendChild(key);
+      item.appendChild(document.createTextNode(String(pair[1])));
+      list.appendChild(item);
+    });
+    $("boot-note").textContent = "initialising " + (settings.assistant_name || identity.assistant);
   }
 
   function renderMemory(memory, facts) {
@@ -590,6 +1005,33 @@
   }
 
   /**
+   * The Pi's own microphone: a real device *and* a speech engine to drive it.
+   * Used to decide whether this page can borrow the Pi's ears when the device it
+   * is open on has none of its own.
+   */
+  function deviceMicAvailable() {
+    var mic = state.micStatus || {};
+    return mic.available === true && mic.enabled !== false;
+  }
+
+  /**
+   * Why voice input is off, said straight.  A missing microphone and a missing
+   * speech engine are different problems with different fixes, so the console
+   * never tells you to plug in a microphone when the real gap is the engine.
+   */
+  function voiceInputBlocked() {
+    var mic = state.micStatus || {};
+    if (String(mic.engine || "none") === "none") {
+      return "There's no speech engine installed on the machine running JARVIS, so no " +
+        "microphone can be transcribed here. Type your message instead - everything except " +
+        "voice input works. Install it with: sh scripts/install.sh --voice, then reload.";
+    }
+    return "There's no microphone available to JARVIS - not on this device and not on the " +
+      "Pi. Type your message instead: chat, tools, memory, reminders and JARVIS's spoken " +
+      "replies all work without one.";
+  }
+
+  /**
    * Voice input needs a microphone *and* something to recognise it with: the Pi's
    * own microphone, or this device's microphone plus a backend STT engine.
    * When neither exists the console goes text-only - visibly, not silently.
@@ -642,9 +1084,7 @@
     }
     var note = $("voice-note");
     if (state.textOnly) {
-      note.textContent = "No microphone is available here, so voice input is off. Type " +
-        "your messages - chat, tools, memory and JARVIS's spoken replies all still work." +
-        " Plug in a USB microphone and reload for voice.";
+      note.textContent = voiceInputBlocked();
     } else if (!speech.synthesis_available && !speech.available) {
       note.textContent = "No speech engine is installed on the machine running JARVIS, " +
         "so replies are text only. Install the voice requirements, then reload.";
@@ -949,6 +1389,7 @@
   function setLevel(value) {
     if (!levelBars.length) levelBars = Array.prototype.slice.call($("level").children);
     var boosted = Math.min(1, value * 6);
+    core.setLevel(boosted);
     for (var i = 0; i < levelBars.length; i++) {
       var middle = Math.abs(i - (levelBars.length - 1) / 2);
       var height = Math.max(0.15, boosted * (1 - middle / levelBars.length) * 1.6);
@@ -969,15 +1410,20 @@
     setBusy(true);
     showTyping("thinking");
     setState("thinking", "thinking");
+    var startedAt = Date.now();
 
     return api("/api/chat", { method: "POST", body: { text: message } })
       .then(function (payload) {
         removeTyping();
+        var reply = payload.reply || {};
+        pushTrace("answered by " + (reply.provider || "offline") + " \u00b7 "
+          + ((Date.now() - startedAt) / 1000).toFixed(1) + "s", "ok");
         return handleReply(payload.reply);
       })
       .catch(function (error) {
         removeTyping();
         addMessage("assistant", "I couldn't reach the brain: " + error.message, { error: true });
+        pushTrace("request failed \u00b7 " + error.message, "warn");
         setState("error", "offline");
       })
       .then(function () {
@@ -997,6 +1443,8 @@
       messageId: reply.id,
     });
     if (reply.pending) showConfirmation(reply.pending);
+    // a reply may just have started (or paused) something: reflect it right away
+    refreshMedia();
     if (reply.error || !reply.text) return Promise.resolve();
     // the socket may have delivered this same reply first: speak it once
     if (!shown) return Promise.resolve();
@@ -1079,6 +1527,16 @@
         setControls();
         var message = (error && error.message) || "the microphone failed";
         if (message === "cancelled") { setState("idle", "idle"); return null; }
+        // Definitively no microphone on this device? The Pi's own microphone can
+        // still take the turn - fall over to it instead of stopping at an error.
+        // (Live Talk is excluded: it hands the loop to /api/live in setLive.)
+        if (!state.live && deviceMicAvailable() &&
+            /no microphone|could not be opened|already in use/i.test(message)) {
+          addMessage("system", "This device has no usable microphone, so I'll listen " +
+            "through the Pi's instead.");
+          serverListen();
+          return null;
+        }
         addMessage("system", message);
         pushFeed("microphone · " + message, "warn");
         // A missing microphone must never make the console look broken: it goes
@@ -1102,14 +1560,16 @@
   function toggleMic() {
     if (state.busy) return;
     if (state.textOnly) {
-      addMessage("system", "There's no microphone here, so I can't listen - type your " +
-        "message instead. Everything except voice input works.");
+      addMessage("system", voiceInputBlocked());
       return;
     }
     if (recorder.active()) {
       recorder.finish();  // stop now and send what was said
       return;
     }
+    // No microphone on this device, but the Pi has one: use the Pi's ears rather
+    // than telling a phone user they cannot talk to their own assistant.
+    if (state.browserMic === false && deviceMicAvailable()) { serverListen(); return; }
     if (recorder.supported()) { captureTurn("listening"); return; }
     // No browser capture (old browser, no permission): use the Pi's microphone.
     serverListen();
@@ -1138,8 +1598,7 @@
   /* ---------------------------------------------------------------- live talk */
   function setLive(enabled) {
     if (enabled && state.textOnly) {
-      addMessage("system", "Live Talk needs a microphone and a speech engine. Neither is " +
-        "available here, so type your messages instead - everything else works.");
+      addMessage("system", "Live Talk needs voice input. " + voiceInputBlocked());
       return;
     }
     state.live = enabled;
@@ -1156,7 +1615,9 @@
       return;
     }
 
-    if (recorder.supported()) {
+    // This device records when it can; when it has no microphone of its own, the
+    // Pi's microphone takes over so Live Talk works either way.
+    if (recorder.supported() && !(state.browserMic === false && deviceMicAvailable())) {
       addMessage("system", "Live Talk on. Speak normally - I'll answer as you go.");
       liveTick();
       return;
@@ -1286,7 +1747,9 @@
     }
     var status = payload.status || {};
     setState(status.state || "idle", status.state_note || status.state);
-    renderProviders(status.providers);
+    renderBootLog(payload);
+    renderProviders(status.providers, status.provider);
+    renderEngines(status.providers, status.provider);
     renderMemory(status.memory, status.facts);
     renderMachine(status.machine, status.tools);
     renderVisitor(status.visitor);
@@ -1314,19 +1777,27 @@
     var providers = status.providers || [];
     var live = providers.filter(function (item) { return item.status === "ready"; });
     setPill($("pill-brain"), live.length ? live[0].slug : "offline", live.length ? "ok" : "warn");
+    setPill($("pill-brains"), live.length + "/" + providers.length,
+      live.length > 1 ? "ok" : (live.length ? "busy" : "warn"));
     setControls();
 
     if (!keepThread) {
       renderHistory(payload.messages);
       // Say plainly what a keyless install can and cannot do - silence here
       // would read as "it is broken" the first time it runs.
+      var keylessOnly = live.length > 0 && live.every(function (item) { return item.keyless; });
       if (!live.length && !state.warnedNoProvider) {
         state.warnedNoProvider = true;
-        addMessage("system", "No AI provider key is configured on this machine, so general " +
-          "questions are answered by the offline engine. Time, maths, system status, " +
-          "memory, your GPIO devices and the visitor protocol already work; add " +
-          "GEMINI_API_KEY or GROQ_API_KEY to .env and restart JARVIS for everything else. " +
-          "Setup help is at /docs.");
+        addMessage("system", "No AI provider is reachable, so general questions go to the " +
+          "offline engine. Time, maths, system status, memory, your GPIO devices and the " +
+          "visitor protocol already work. Open the Ai core panel - every red node there is " +
+          "one key away from becoming another brain. Setup help is at /docs.");
+      } else if (keylessOnly && !state.warnedKeyless) {
+        state.warnedKeyless = true;
+        addMessage("system", "Answering through the keyless public endpoint: it needs no setup " +
+          "and keeps JARVIS alive offline-of-quota, but anything you send it leaves this " +
+          "machine. Add a provider key for a private brain, or set POLLINATIONS_ENABLED=false " +
+          "to switch it off. Open the Ai core panel to see the whole chain.");
       }
       if (state.textOnly && !state.warnedNoMic) {
         state.warnedNoMic = true;
@@ -1445,17 +1916,20 @@
         showTyping(event.tool);
         setState("working", event.tool);
         pushFeed("tool → " + event.tool);
+        pushTrace("running " + event.tool, "busy");
         break;
       case "tool_result":
         removeTyping();
         if (!event.ok) addMessage("system", event.tool + " failed: " + (event.error || "unknown error"));
         pushFeed(event.tool + (event.ok ? " · ok" : " · failed"), event.ok ? "ok" : "warn");
+        pushTrace(event.tool + (event.ok ? " ok" : " failed"), event.ok ? "ok" : "warn");
         break;
       case "confirm":
         setState("working", "waiting for your go-ahead");
         break;
       case "provider":
         addMessage("system", event.message || "switching provider");
+        pushTrace((event.provider ? event.provider + " unavailable - next brain up" : "switching provider"), "warn");
         refresh().catch(function () {});
         break;
       case "stt_error":
@@ -1564,6 +2038,15 @@
         .catch(function () {});
     });
 
+    // The transport buttons are the same MPRIS control the voice commands use,
+    // so a tap here and "pause the music" from across the room do one thing.
+    // (Scoped to the transport: <body> carries data-media too, for the styling.)
+    Array.prototype.forEach.call(document.querySelectorAll("#transport [data-media]"), function (node) {
+      node.addEventListener("click", function () {
+        mediaAction(node.getAttribute("data-media") || "toggle");
+      });
+    });
+
     // Delegated on the document, because the suggestion chips live both in the
     // intro message and in the quick-command bar.
     document.addEventListener("click", function (event) {
@@ -1603,8 +2086,12 @@
 
     seedIntro();
     refresh().catch(function () {});
+    refreshMedia();
     connect();
     setInterval(function () { refresh().catch(function () {}); }, 20000);
+    // Media changes without JARVIS (a song ending, a phone pausing Spotify):
+    // cheap enough to check every 10s, and never while the tab is hidden.
+    setInterval(refreshMedia, 10000);
   }
 
   if (document.readyState === "loading") {

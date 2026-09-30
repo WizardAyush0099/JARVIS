@@ -26,6 +26,7 @@ nano .env                                    # add one API key
 - [Visitor protocol (when someone important walks in)](#visitor-protocol-when-someone-important-walks-in)
 - [AI providers and automatic fallback](#ai-providers-and-automatic-fallback)
 - [Voice](#voice)
+- [Music and video (Spotify, YouTube, anything)](#music-and-video-spotify-youtube-anything)
 - [Memory](#memory)
 - [Hardware and GPIO](#hardware-and-gpio)
 - [Safety and security](#safety-and-security)
@@ -170,8 +171,11 @@ PortAudio, re-run it as `sh scripts/setup-pi.sh --system` to have the Debian aud
 and GPIO packages installed for you (it asks for your password once), or add your
 AI keys in the next step first - JARVIS runs fine without voice.
 
-**3. Add a key.** Open `.env` in VS Code and paste at least one provider key
-(`GEMINI_API_KEY` is the quickest free one). Everything else already works.
+**3. Add a key (optional).** JARVIS already answers online through its keyless
+fallback and works fully offline - but a key makes it faster and private. Open
+`.env` in VS Code and paste at least one provider key (`GEMINI_API_KEY` is the
+quickest free one). Any extra key you add becomes another fallback automatically,
+and the *Ai core* panel shows each one with a **get key** link.
 
 **4. Start it.** Press `F5` and choose **JARVIS: web interface** (or `Ctrl+Shift+B`
 for the `JARVIS: run web interface` task). The console opens in VS Code's Simple
@@ -188,6 +192,42 @@ Screen* for full-screen. To run it later without VS Code attached:
 .venv/bin/python main.py            # foreground
 sh scripts/cloud.sh                 # background, logs/cloud.log, --stop to stop
 ```
+
+### Everything to install, on one card
+
+Every dependency JARVIS has, in one place. There is no Node.js, no npm and no
+build step - the console is plain JavaScript served by Python.
+
+| What | Why | How to get it |
+|---|---|---|
+| Raspberry Pi OS (Bookworm/Bullseye, 64-bit) | the host OS | *Raspberry Pi Imager* |
+| Python 3.9+ | runs JARVIS | already installed - check with `python3 --version` |
+| `git` | clone the repo | `sudo apt install -y git` |
+| core + voice + hardware + dev Python packages | everything in `requirements*.txt` | `sh scripts/setup-pi.sh --voice --hardware --dev` |
+| Debian audio/GPIO packages | only if the setup task reports they are missing | `sh scripts/setup-pi.sh --system` |
+| `playerctl` | music control from the console (optional) | `sudo apt install -y playerctl` |
+| VS Code extensions | Python, Pylance, debugpy, Ruff, TOML, YAML | VS Code offers them from `.vscode/extensions.json` |
+
+A fresh VS Code terminal on the Pi, start to finish:
+
+```bash
+sudo apt update && sudo apt install -y git
+
+git clone https://github.com/WizardAyush0099/JARVIS.git
+cd JARVIS
+
+# venv + every Python package + the health report (safe to re-run):
+sh scripts/setup-pi.sh --voice --hardware --dev
+
+.venv/bin/python main.py --check      # what is ready, what is still missing
+.venv/bin/python main.py              # run it: http://<pi-ip>:8765/
+```
+
+Nothing above is a hard requirement except Python and the Python packages:
+without `--voice`/`--hardware` JARVIS still runs (typed chat, no microphone),
+and with no API key at all it runs on the keyless fallback plus the offline
+engine. Add `GEMINI_API_KEY=...` to `.env` whenever you want a private, faster
+brain - or paste the key through your workspace's Environment/Keys settings.
 
 ---
 
@@ -297,10 +337,11 @@ Around them the HUD shows the truth about the machine it is running on:
 
 | Part of the console | What it is |
 |---|---|
-| Boot sequence | `INITIATING SYSTEM 1...` while the page links to the brain - skipped by any click, and it never blocks the app |
-| Reactor core | the orb; its colour and the level meter follow the real state (idle / listening / thinking / working / speaking / error) |
+| Boot sequence | `INITIATING SYSTEM 1...` while the page links to the brain, then a real readout (brains online, tools registered, memory, voice, host) - skipped by any click, and it never blocks the app |
+| Neural core | the arc-reactor canvas. Particles *are* the AI's face: they drift when idle, flare and spread with your microphone level while listening, link into a firing synapse web while thinking, and send out sonar rings while speaking. All of it driven by real state, on a Pi-cheap canvas (no blur, no shaders, ~40 fps, nothing at all in a hidden tab or under `prefers-reduced-motion`) |
+| Cognition trace | the pipeline narrating itself - state changes, tools as they run, which brain answered and how long the round trip took. Facts, not theatre |
 | System monitor | CPU, memory, temperature and disk gauges, sampled on a background thread. A metric this machine cannot report shows a dash, never a fake number |
-| AI core | the provider chain and which one is currently answering |
+| AI core | the fallback chain as a live circuit: which brain is answering, which are cooling down, and a **get key** link on every node that is one key away |
 | Visitor banner | appears while visitor protocol is active, with a *stand down* button |
 | Activity feed + log | every tool call, state change and reply as it happens, plus the backend log ring buffer |
 | Rail | jumps to any of those blocks (it opens the drawer first on a phone) |
@@ -344,7 +385,7 @@ stays an assistant.
                         core/router.py  ── confirmation gate, timeouts, events
                                │
                           tools/*  ── system · files · web · email · image
-                               │        coding · utilities · hardware
+                               │        media · spotify · coding · utilities · hardware
                                │
                        hardware/gpio.py  ── mock backend | gpiozero
                                │
@@ -389,6 +430,12 @@ layer - intent rules, planner prompt, answer prompt and the web console - follow
 
 > "search for Raspberry Pi 5 news" · "what's the weather in Delhi" ·
 > "summarise https://example.com/article" · "open YouTube and search for Pi projects"
+
+**Music and video** *(works offline - no key, no account)*
+
+> "pause the music" · "skip this song" · "what's playing" · "turn it down" ·
+> "play lofi beats on spotify" · "play arijit singh on youtube" ·
+> "watch the video of lofi girl" · "my liked songs" · "like this song"
 
 **Files**
 
@@ -478,26 +525,50 @@ Providers are tried in order, and a failing one is parked in a cooldown so the
 next request skips straight to a healthy one:
 
 ```
-gemini → groq → openrouter → openai → ollama → offline
+gemini → groq → openrouter → openai → <every other provider you have a key for>
+       → pollinations (keyless) → offline
 ```
 
 - a **rate limit** cools a provider for ~90 s (longer if it keeps failing)
 - a **rejected key** cools it for ~15 min, so one bad key never stalls every request
 - a **transient network error** is retried in place, then fails over
+- every provider has its own **timeout and retry budget**, so one slow endpoint
+  can never hold the whole chain hostage (the keyless endpoint gets one try and
+  20 s; a normal provider gets the full `AI_REQUEST_TIMEOUT` and your retries)
 - when everything online is down, the **offline engine** answers instead of erroring
 
-Any provider you set a key for is used, even if it is not in `AI_PROVIDERS` - so
-adding a key is enough to add a fallback. Providers with no key are listed in the
-UI as *add a key* rather than being probed and timing out.
+### It does not die when the keys run out
+
+Four separate things keep JARVIS answering, and each one is visible in the
+console rather than being a claim:
+
+1. **Any key is a fallback.** Set a key and that provider joins the chain even if
+   `AI_PROVIDERS` never mentions it - the order in that one variable is only a
+   hint about priority.
+2. **Keyless safety net.** With no key at all, JARVIS still answers online through
+   **Pollinations**, which needs no signup and sits *after* every provider you
+   have credentials for. It is a shared public endpoint, so anything sent through
+   it leaves the machine - set `POLLINATIONS_ENABLED=false` to forbid it.
+3. **Local engines.** **Ollama** and **LM Studio** answer with no internet and no
+   key. Switch one on and JARVIS works even when the router does not.
+4. **Offline engine.** Time, dates, maths, unit conversions, system status,
+   memory, GPIO and the visitor protocol never touch the network at all.
+
+The **Ai core** panel draws all of this as a circuit: one node per brain in
+fallback order, the node answering right now lit up, cooling nodes amber, and
+any node that only needs a key showing a **get key** link straight to that
+vendor's key page. *brains 3/9* in the header is that same number.
 
 Supported out of the box: **Google Gemini**, **Groq**, **OpenRouter**, **OpenAI**,
-**Together**, **Cerebras**, **Mistral**, **DeepSeek**, **SambaNova**, any
-OpenAI-compatible endpoint, and **Ollama** for a fully local model:
+**Together**, **Cerebras**, **Mistral**, **DeepSeek**, **SambaNova**,
+**NVIDIA NIM**, **Hugging Face**, **xAI**, any other OpenAI-compatible endpoint,
+**Ollama** / **LM Studio** for a fully local model, and the keyless
+**Pollinations** endpoint:
 
 ```ini
-OLLAMA_ENABLED=true
-OLLAMA_BASE_URL=http://localhost:11434/v1
-OLLAMA_MODEL=llama3.2
+OLLAMA_ENABLED=true          # local, no key, no internet
+LMSTUDIO_ENABLED=true        # local, no key
+POLLINATIONS_ENABLED=true    # keyless cloud fallback (default)
 ```
 
 A good free-tier setup is **Gemini or Groq as the primary** (the most generous
@@ -546,6 +617,20 @@ Hindi/Hinglish is detected automatically and switches to `hi-IN-MadhurNeural`.
 - plug a USB microphone in later and voice resumes on the next start - no code
   change, no reinstall.
 
+**With a microphone, or without - the same console.** Voice input is routed by what
+is actually available, so whichever row describes your machine, the *Mic* and
+*Live Talk* buttons do the right thing instead of failing:
+
+| Your setup | What *Mic* / *Live Talk* do |
+|---|---|
+| Pi has a microphone and a speech engine | listen on the Pi's own microphone (`/api/listen`, `/api/live`) |
+| Pi has no microphone, your phone or laptop does | record on that device and send the audio to the Pi's STT engine (`/api/transcribe`) |
+| Pi has no microphone, your device has none either | both buttons are disabled and the chat explains why - type every message |
+| No speech engine installed | the console names *that* problem and the install command, rather than blaming a missing microphone |
+
+Typed chat, tools, memory, reminders, search, images, GPIO, the visitor protocol and
+JARVIS's spoken replies work in **every** row of that table.
+
 For Piper:
 
 ```bash
@@ -591,6 +676,85 @@ PocketSphinx are offline and lighter but less accurate.
 
 Listening is automatically paused while JARVIS speaks, so it never transcribes
 its own voice.
+
+---
+
+## Music and video (Spotify, YouTube, anything)
+
+JARVIS drives whatever is playing on the machine, and he needs no account, no key
+and no internet to do it:
+
+> "pause the music" · "resume" · "skip this song" · "go back a track" ·
+> "stop the music" · "turn it down" · "mute the music" · "what's playing"
+
+Under the hood that is **MPRIS over D-Bus**, through `playerctl` - the same
+interface your keyboard's media keys use. One interface, so it works with
+everything at once:
+
+| Playing where | JARVIS controls it |
+|---|---|
+| the Spotify desktop app | yes |
+| the Spotify web player in Chromium | yes |
+| a **YouTube** (or any) video in a browser tab | yes |
+| VLC, mpv, Rhythmbox, Lollypop, `cvlc` | yes |
+
+One small package is required:
+
+```bash
+sudo apt install playerctl
+```
+
+Without it JARVIS says exactly that instead of pretending, and every other
+feature keeps working. `main.py --check` and the `/docs` page both report whether
+it is installed.
+
+**Playing something specific.** The YouTube and Spotify rules turn a name into the
+real thing:
+
+> "play lofi beats on spotify" · "play Bohemian Rhapsody" ·
+> "play arijit singh on youtube" · "watch the video of lofi girl"
+
+`youtube_play` finds the top result and opens the video itself, not a results
+page. A browser may still want one click before a freshly opened page makes
+sound, and JARVIS says so when that happens - after which "pause" and "next"
+drive the tab through MPRIS like anything else.
+
+**Liked Songs (optional).** Spotify's own API adds the two things MPRIS cannot
+know: your **saved songs**, and starting a *specific* track, artist or playlist.
+
+> "my liked songs" · "like this song" · "add this to my liked songs" · "unlike this"
+
+Link it once, on the machine running JARVIS:
+
+```bash
+.venv/bin/python scripts/spotify_auth.py
+```
+
+It prints the exact Redirect URI to paste into your Spotify app, opens the
+consent page, catches the callback locally, and tells you the three values to put
+in `.env` (`SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REFRESH_TOKEN`).
+On a Pi with no browser (SSH) add `--manual`: it prints the link and asks for the
+address Spotify redirects you to. Add `--write` and it puts the refresh token
+into `.env` for you. Re-run it any time to relink.
+
+Two honest limits, both Spotify's rather than JARVIS's:
+
+- **starting playback needs Spotify Premium**; listing and saving liked songs
+  works on a free account
+- playback control needs an **active device** - open Spotify on the Pi or your
+  phone first. With none, JARVIS says so and offers to open the track in the
+  browser instead.
+
+**In the console.** The telemetry panel has a *Media* block: the real track and
+artist read from the player, a disc that spins while it plays, and
+previous / play-pause / next / quieter / louder buttons. They call the same code
+as the voice commands, so tapping the phone and saying "pause the music" from
+across the room are one action. Nothing is invented: with no player running the
+block says so.
+
+The whole MPRIS half is flagged `offline_safe`, so **"pause the music" works with
+no API key, no model and no internet** - it is in the offline engine's capability
+list.
 
 ---
 
@@ -693,9 +857,11 @@ Everything is optional and lives in `.env` (see [`env.example`](env.example)).
 |---|---|---|
 | `JARVIS_NAME` / `JARVIS_OWNER` | `JARVIS` / `Ayush` | identity used in prompts and replies |
 | `JARVIS_CREATOR` | value of `JARVIS_OWNER` | who built JARVIS; "who made you" answers with this name |
-| `AI_PROVIDERS` | `gemini,groq,openrouter` | fallback order |
-| `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, … | – | provider keys |
-| `OLLAMA_ENABLED`, `OLLAMA_MODEL` | `false` | fully local model |
+| `AI_PROVIDERS` | `gemini,groq,openrouter` | fallback order hint; every provider with a key joins the chain anyway |
+| `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `TOGETHER_API_KEY`, `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`, `SAMBANOVA_API_KEY`, `NVIDIA_API_KEY`, `HF_TOKEN`, `XAI_API_KEY` | – | provider keys; each one is another fallback |
+| `OLLAMA_ENABLED`, `OLLAMA_MODEL` | `false` | fully local model, no key, no internet |
+| `LMSTUDIO_ENABLED`, `LMSTUDIO_MODEL` | `false` | local LM Studio server (no key) |
+| `POLLINATIONS_ENABLED` | `true` | keyless public fallback, used only after every provider above |
 | `AI_TEMPERATURE`, `AI_MAX_TOKENS`, `AI_REQUEST_TIMEOUT`, `AI_MAX_RETRIES` | `0.4`, `900`, `45`, `2` | model behaviour |
 | `JARVIS_HISTORY_TURNS` | `12` | conversation window sent to the model |
 | `SEARCH_PROVIDER` | `duckduckgo` | `duckduckgo` / `tavily` / `brave` / `searxng` |
@@ -705,6 +871,8 @@ Everything is optional and lives in `.env` (see [`env.example`](env.example)).
 | `STT_ENABLED`, `STT_ENGINE`, `STT_WAKE_WORD`, `VOSK_MODEL_PATH` | `false`, `google`, `jarvis` | speech input |
 | `JARVIS_WEB_HOST`, `JARVIS_WEB_PORT`, `JARVIS_WEB_TOKEN` | `0.0.0.0`, `8765`, – | web interface (`PORT` from the environment wins, for containers) |
 | `JARVIS_VOICE_OUTPUT` | `device` | where replies are spoken: `device`, `browser` or `off` |
+| *(system)* `playerctl` | – | media control (play/pause/skip/volume) for Spotify, browsers and VLC. `sudo apt install playerctl` |
+| `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REFRESH_TOKEN` | – | optional Spotify link: liked songs + starting a specific track. See `scripts/spotify_auth.py` |
 | `CONFIRM_DESTRUCTIVE`, `ALLOWED_APPS`, `ALLOWED_PATHS`, `TOOL_TIMEOUT` | `true`, … | safety limits |
 
 ---
@@ -712,7 +880,7 @@ Everything is optional and lives in `.env` (see [`env.example`](env.example)).
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests -q          # 269 tests
+.venv/bin/python -m pytest tests -q          # 353 tests
 .venv/bin/python -m pyflakes config core ai tools voice hardware gui server main.py   # clean
 npx --yes -p typescript tsc -b --noEmit      # type-checks the browser client
 ```
@@ -722,6 +890,12 @@ intent matching, expression safety, the file sandbox, the trash-based delete,
 reminders, migration of the old `ChatLog.json`, provider failover and cooldowns,
 plan validation, the confirmation flow, the GPIO tools and their spoken-name
 resolution, the "never fake a result" guarantee, and the HTTP/WebSocket API.
+
+The media layer is tested against a stand-in `playerctl` on the `PATH`, so the
+tests assert the exact command line JARVIS builds and the exact wording it
+reports - including the case where the player ignores the command. Spotify's API
+is tested against canned HTTP responses: token refresh, liked songs, starting a
+track, and each of Spotify's refusals (Premium, no active device, rate limit).
 
 The voice chain has its own tests (`tests/test_voice_api.py`,
 `tests/test_console_flow.py`) with stub speech engines, so they check the real
@@ -740,8 +914,9 @@ first thing to run on the Pi.
 |---|---|
 | Blank page in the browser | The page served but could not reach the brain. Start it with `.venv/bin/python main.py --web` and reload; the UI shows an offline banner in that case. |
 | `FastAPI is not installed` | `pip install -r requirements.txt` |
-| Assistant answers "I don't have an AI provider available" | No key is set. Add one to `.env`, or start Ollama. `--check` shows which provider is missing. |
+| Assistant answers "I don't have an AI provider available" | No key is set and the keyless fallback is switched off. Add one key to `.env`, set `POLLINATIONS_ENABLED=true`, or start Ollama. `--check` names the exact variable each provider is missing. |
 | `I'm running offline right now` | Every provider failed or is cooling down. Check the internet, then press *reset provider cooldowns* in the status panel. |
+| Answers are slower or less private than expected | You are on the keyless fallback (`pollinations` lit in the *Ai core* panel). Add any provider key for a private, faster brain, or set `POLLINATIONS_ENABLED=false` to forbid the shared endpoint. |
 | Voice silent | Run `--check`. Install `pygame` (playback) and `edge-tts`, or `espeak-ng` for offline. |
 | `speech output : none` | No TTS engine installed. `pip install -r requirements-voice.txt`. |
 | Microphone not found | Install `pyaudio` and `portaudio19-dev`; check `arecord -l`. Try `STT_ENGINE=vosk` for offline. |
@@ -749,6 +924,11 @@ first thing to run on the Pi.
 | `email is not configured yet` | Set `EMAIL_ENABLED=true`, `SMTP_USER` and `SMTP_PASSWORD`. Gmail needs an **App Password**, not your normal password. |
 | Email login rejected | Gmail/Outlook require an app password or OAuth; a normal password will be refused. |
 | Image generation failed | Needs internet (Pollinations) or `OPENAI_API_KEY`. |
+| `media control needs playerctl` | `sudo apt install playerctl`, then reload. The rest of JARVIS is unaffected meanwhile. |
+| "nothing is playing ... nothing to control" | Start a song or a video first - MPRIS can only control a player that is running. |
+| "Spotify refused ... needs Premium" | Spotify's Web API will not start playback on a free account. Playing, pausing and skipping through MPRIS still work. |
+| "Spotify has no active device" | Open Spotify on the Pi or your phone (Spotify Connect) and ask again, or let JARVIS open the track in the browser. |
+| Spotify tools say "not linked" | Optional feature: run `scripts/spotify_auth.py` once, or ignore it - media control needs no account. |
 | The panel says `gpio mock` | `gpiozero` is missing, or this is not a Pi. On a Pi: `pip install -r requirements-hardware.txt`. Development off-Pi is meant to run this way. |
 | Hardware tools say "I don't have a device called …" | That id is not in `config/hardware.json`. `list my hardware devices` prints the ones that are. |
 | Search returns nothing useful | Your IP may be blocked by DuckDuckGo. Add `TAVILY_API_KEY` or `BRAVE_API_KEY`. |
@@ -864,6 +1044,8 @@ JARVIS/
 │   ├── web.py               search, fetch, summarise, YouTube, weather
 │   ├── email_tool.py        SMTP with confirmation
 │   ├── image.py             image generation
+│   ├── media.py             play/pause/skip/volume for anything playing (MPRIS)
+│   ├── spotify.py           liked songs and playback control (optional link)
 │   ├── coding.py            explain, debug, create, patch, run
 │   └── utilities.py         maths, units, notes, reminders, memory
 │
@@ -879,8 +1061,9 @@ JARVIS/
 │   ├── web/                 the browser interface (plain HTML/CSS/JS)
 │   └── desktop.py           optional Tkinter window
 │
-├── tests/                   269 hermetic tests
-├── scripts/                 install.sh, run.sh
+├── tests/                   353 hermetic tests
+├── scripts/                 install.sh, run.sh, setup-pi.sh,
+│                            spotify_auth.py (one-time Spotify link)
 ├── data/                    memory, chat log, notes, reminders, trash
 ├── assets/generated/        images JARVIS creates
 ├── assets/voice_cache/      cached speech

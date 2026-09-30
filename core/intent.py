@@ -486,6 +486,183 @@ def _rule_system_status(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
     return None
 
 
+#: Words that mean "the thing playing right now", used to tell "pause the music"
+#: (a transport control) apart from "play some music" (start something).
+_MEDIA_NOUN = r"(?:music|song|songs|track|tracks|video|audio|playback|movie|film|it)"
+
+#: (pattern, action) pairs for the transport controls.  Order matters only in
+#: that the first match wins.
+_MEDIA_TRANSPORT: Sequence[tuple] = (
+    (r"^(?:pause|hold)\b", "pause"),
+    (rf"\b(?:pause|hold)\b[^.?!]*\b{_MEDIA_NOUN}\b", "pause"),
+    (r"^(?:resume|unpause|continue)\b", "play"),
+    (rf"\b(?:resume|unpause|continue)\b[^.?!]*\b{_MEDIA_NOUN}\b", "play"),
+    (rf"\bstop\b[^.?!]*\b{_MEDIA_NOUN}\b", "stop"),
+    (r"^(?:next|skip)(?:\s+(?:song|track|video))?$", "next"),
+    (rf"\b(?:next|skip)\b[^.?!]*\b{_MEDIA_NOUN}\b", "next"),
+    (r"\b(?:previous|go back a|back a)\b[^.?!]*\b(?:song|track|video)\b", "previous"),
+    (r"^(?:previous|back)$", "previous"),
+    (r"\b(?:louder|turn it up|volume up|increase (?:the )?(?:volume|sound))\b", "volume-up"),
+    (r"\b(?:quieter|turn it down|volume down|lower (?:the )?(?:volume|sound))\b", "volume-down"),
+    (rf"\bmute\b[^.?!]*\b(?:{_MEDIA_NOUN}|sound|speakers?)\b", "mute"),
+    (r"\b(?:shuffle|randomi[sz]e)\b[^.?!]*\b(?:music|songs?|tracks?|playlist|spotify)\b", "shuffle"),
+)
+
+#: "play music" with no name attached - resume or start something, not a search.
+_VAGUE_MUSIC = {
+    "music", "some music", "the music", "a song", "some songs", "songs", "something",
+    "something nice", "my music", "some tunes", "tunes", "a track", "some music please",
+}
+
+_KIND_WORDS = {
+    "playlist": "playlist",
+    "album": "album",
+    "artist": "artist",
+    "band": "artist",
+    "song": "track",
+    "track": "track",
+}
+
+
+def _kind_from(phrase: str) -> str:
+    for word, kind in _KIND_WORDS.items():
+        if re.search(rf"\b{word}\b", phrase):
+            return kind
+    return "track"
+
+
+def _rule_media(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
+    """Music and video control - deliberately deterministic.
+
+    "Pause the music" must work with no API key, no model and no internet, so the
+    transport controls are rules rather than a prompt.  Anything that names a
+    track is handed to the tools that can actually start it.
+    """
+    # -- what is playing ------------------------------------------------- #
+    if re.search(
+        r"\b(?:what(?:'s| is| was)?\s+(?:playing|this|the (?:song|track|music|video))|"
+        r"now playing|which song|what song)\b",
+        text,
+    ):
+        return Intent("media_now_playing", tool="media_now_playing", category="media", reason="now playing")
+
+    if re.search(r"\b(?:what|which)\s+(?:players?|devices?)\b[^.?!]*\b(?:playing|media|music)\b", text):
+        return Intent("media_players", tool="media_players", category="media", reason="players")
+
+    # -- liking, before listing: "add this to my liked songs" is a save ----- #
+    if re.search(r"\b(?:unlike|unsave|dislike)\b[^.?!]*\b(?:this|that|current|the)\b", text) or re.search(
+        r"\bremove\b[^.?!]*\bfrom (?:my )?liked", text
+    ):
+        return Intent(
+            "spotify_unlike", tool="spotify_like_current", args={"liked": False},
+            category="media", reason="unlike",
+        )
+    if re.search(
+        r"\b(?:like|save|heart|add)\b[^.?!]*\b(?:this|that|current|this song|this track)\b", text
+    ) or re.search(r"\b(?:add|save)\b[^.?!]*\bto (?:my )?(?:liked|saved)", text):
+        return Intent(
+            "spotify_like", tool="spotify_like_current", args={"liked": True},
+            category="media", reason="like",
+        )
+
+    # -- liked songs ----------------------------------------------------- #
+    if re.search(
+        r"\b(?:my|the)\s+(?:liked|saved|favourite|favorite)\s+(?:songs|tracks|music)\b", text
+    ) or re.search(r"\b(?:show|list|what are|see|open)\b[^.?!]*\b(?:liked|saved|favourite|favorite)\s+(?:songs|tracks)\b", text):
+        return Intent("spotify_liked", tool="spotify_liked_songs", category="media", reason="liked songs")
+
+    # -- named targets: "... on spotify" / "... on youtube" --------------- #
+    spotify_target = re.search(r"^(?:please\s+)?(.+?)\s+on\s+spotify$", text)
+    if spotify_target:
+        phrase = spotify_target.group(1).strip()
+        if re.match(r"^(?:open|launch)", phrase):
+            return Intent("spotify_open", tool="spotify_open", category="media", reason="open spotify")
+        phrase = re.sub(r"^(?:play|put on|start|queue|shuffle)\s+(?:me\s+)?", "", phrase).strip()
+        if phrase in ("spotify", ""):
+            return Intent("spotify_open", tool="spotify_open", category="media", reason="spotify")
+        if phrase in _VAGUE_MUSIC:
+            return Intent("spotify_play_music", tool="play_music", category="media", reason="music")
+        return Intent(
+            "spotify_play", tool="spotify_search_and_play",
+            args={"query": phrase, "kind": _kind_from(phrase)}, category="media", reason="spotify",
+        )
+
+    youtube_target = re.search(r"^(?:please\s+)?(.+?)\s+on\s+youtube$", text)
+    if youtube_target:
+        phrase = youtube_target.group(1).strip()
+        phrase = re.sub(r"^(?:play|put on|start|watch)\s+(?:me\s+)?", "", phrase).strip()
+        return Intent(
+            "youtube_play", tool="youtube_play", args={"query": phrase}, category="web", reason="youtube",
+        )
+
+    if re.match(r"^(?:please\s+)?(?:open|launch)\s+spotify\b", text):
+        trailer = re.sub(r"^(?:please\s+)?(?:open|launch)\s+spotify\b", "", text).strip()
+        playing = re.match(r"^(?:and\s+)?play\s+(.+)$", trailer)
+        if playing:
+            # "open Spotify and play X" wants music, not a search page: the
+            # play_music cascade plays it when Spotify is linked and opens the
+            # search page when it is not.
+            return Intent(
+                "play_music_named", tool="play_music", args={"query": playing.group(1).strip(_TRAILING)},
+                category="media", reason="spotify",
+            )
+        trailer = re.sub(r"^(?:and\s+)?(?:search(?: for)?)\s+", "", trailer).strip()
+        return Intent(
+            "spotify_open", tool="spotify_open", args={"query": trailer}, category="media", reason="spotify"
+        )
+
+    # -- transport controls ---------------------------------------------- #
+    for pattern, action in _MEDIA_TRANSPORT:
+        if re.search(pattern, text):
+            return Intent(
+                f"media_{action}",
+                tool="media_control",
+                args={"action": action},
+                category="media",
+                reason="transport",
+            )
+
+    # -- "set the volume to 40" ------------------------------------------ #
+    volume_target = re.search(r"\b(?:set|turn)\b[^.?!]*\bvolume\b[^.?!]*?\b(\d{1,3})\b", text)
+    if volume_target:
+        return Intent(
+            "set_volume", tool="set_volume", args={"level": int(volume_target.group(1))},
+            category="system", reason="volume",
+        )
+
+    # -- "play <something>" / "study with me on youtube" ---------------- #
+    play = re.match(r"^(?:please\s+)?play\s+(?:me\s+)?(.*)$", text)
+    if play:
+        phrase = play.group(1).strip()
+        if "youtube" in phrase:
+            cleaned = re.sub(r"\b(?:on\s+)?youtube\b", " ", phrase)
+            cleaned = re.sub(r"\s+", " ", cleaned).strip(_TRAILING)
+            return Intent(
+                "youtube_play", tool="youtube_play", args={"query": cleaned}, category="web", reason="youtube"
+            )
+        if phrase in _VAGUE_MUSIC or not phrase:
+            # No name given: this must work with no account, no key and no
+            # internet, so it is a plain transport play (MPRIS) - not a search.
+            return Intent(
+                "media_play", tool="media_control", args={"action": "play"},
+                category="media", reason="music",
+            )
+        return Intent(
+            "play_music_named", tool="play_music", args={"query": phrase},
+            category="media", reason="music by name",
+        )
+
+    watch = re.match(r"^(?:please\s+)?(?:watch|put on)\s+(?:the\s+)?(?:video|clip|movie)\s+(.+)$", text)
+    if watch:
+        wanted = re.sub(r"^(?:of|about|for)\s+", "", watch.group(1).strip(_TRAILING))
+        return Intent(
+            "youtube_play", tool="youtube_play", args={"query": wanted},
+            category="web", reason="video",
+        )
+
+    return None
+
+
 def _rule_open_url(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
     match = re.search(
         r"\b(?:open|launch|go to|visit|browse)\s+(?:the\s+)?(?:website\s+|site\s+|page\s+|link\s+)?"
@@ -758,6 +935,7 @@ RULE_FUNCTIONS: Sequence[Callable[[str, Dict[str, Any]], Optional[Intent]]] = (
     _rule_top_processes,
     _rule_hardware,
     _rule_system_status,
+    _rule_media,
     _rule_open_url,
     _rule_youtube,
     _rule_open_app,

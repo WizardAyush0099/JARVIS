@@ -86,6 +86,13 @@ def test_the_hud_page_and_its_hooks_are_served(settings, events):
             'id="orb"', 'id="thread"', 'id="composer"', 'id="console-bar"',
             'id="btn-mic"', 'id="btn-live"', 'id="btn-mic-mute"', 'id="btn-voice-mute"',
             'id="btn-stop"', 'id="btn-clear"', 'id="level"', 'id="state-label"',
+            'id="core-canvas"',   # the neural core canvas
+            'id="trace-list"',     # cognition trace
+            'id="chain"',          # fallback chain circuit
+            'id="chain-ready"', 'id="chain-total"',
+            'id="pill-brains"', 'id="boot-log"',
+            'id="block-media"',    # now playing + transport
+            'id="media-title"', 'id="transport"', 'data-media="toggle"',
         ):
             assert marker in html, marker
 
@@ -97,6 +104,16 @@ def test_the_hud_page_and_its_hooks_are_served(settings, events):
         state = client.get("/api/state").json()
         assert "machine" in state["status"]
         assert "visitor" in state["status"]
+
+        # the fallback chain the console draws is real, and each node carries
+        # what the UI needs to explain it - a link, never a key
+        chain = state["status"]["providers"]
+        assert chain, "the power grid needs the chain"
+        assert chain[-1]["slug"] == "offline"
+        for node in chain:
+            if node["status"] == "not configured" and node["requires_key"]:
+                assert node["docs"].startswith("https://"), node["slug"]
+            assert "api_key" not in node
 
 
 def test_a_voice_turn_reaches_the_browser_over_the_socket(settings, events):

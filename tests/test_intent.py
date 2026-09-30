@@ -32,6 +32,63 @@ def test_normalize_keeps_plain_text():
 
 
 # --------------------------------------------------------------------------- #
+# media: music and video, which must work with no key and no model
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "text,tool,args",
+    [
+        ("pause the music", "media_control", {"action": "pause"}),
+        ("pause", "media_control", {"action": "pause"}),
+        ("resume", "media_control", {"action": "play"}),
+        ("skip this song", "media_control", {"action": "next"}),
+        ("go back a song", "media_control", {"action": "previous"}),
+        ("stop the music", "media_control", {"action": "stop"}),
+        ("turn it down", "media_control", {"action": "volume-down"}),
+        ("mute the music", "media_control", {"action": "mute"}),
+        ("what is playing", "media_now_playing", {}),
+        ("what song is this", "media_now_playing", {}),
+        ("play some music", "media_control", {"action": "play"}),
+        ("play music", "media_control", {"action": "play"}),
+        ("play lofi beats", "play_music", {"query": "lofi beats"}),
+        ("play lofi beats on spotify", "spotify_search_and_play", {"query": "lofi beats"}),
+        ("play my discover weekly playlist on spotify", "spotify_search_and_play", {"kind": "playlist"}),
+        ("play arijit singh on youtube", "youtube_play", {"query": "arijit singh"}),
+        ("watch the video of lofi girl", "youtube_play", {"query": "lofi girl"}),
+        ("open spotify", "spotify_open", {}),
+        ("my liked songs", "spotify_liked_songs", {}),
+        ("show my liked songs", "spotify_liked_songs", {}),
+        ("like this song", "spotify_like_current", {"liked": True}),
+        ("add this to my liked songs", "spotify_like_current", {"liked": True}),
+        ("unlike this", "spotify_like_current", {"liked": False}),
+        ("set the volume to 40", "set_volume", {"level": 40}),
+    ],
+)
+def test_media_phrases_are_deterministic(text, tool, args):
+    found = match(text)
+    assert found is not None, text
+    assert found.tool == tool, f"{text!r} went to {found.tool}"
+    for key, value in args.items():
+        assert found.args.get(key) == value, f"{text!r} -> {found.args}"
+
+
+@pytest.mark.parametrize(
+    "text,tool",
+    [
+        ("what time is it", "current_time"),
+        ("calculate 22*3", "calculate"),
+        ("search for raspberry pi 5 news", "web_research"),
+        ("open github.com", "open_url"),
+        ("open youtube", "youtube_search"),
+        ("system status", "system_status"),
+    ],
+)
+def test_media_rules_do_not_steal_unrelated_commands(text, tool):
+    """A new rule must never quietly re-route something that already worked."""
+    found = match(text)
+    assert found is not None and found.tool == tool, f"{text!r} -> {found and found.tool}"
+
+
+# --------------------------------------------------------------------------- #
 # identity
 # --------------------------------------------------------------------------- #
 def test_identity_answers_about_the_owner():

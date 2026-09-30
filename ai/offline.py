@@ -23,14 +23,14 @@ log = get_logger("offline")
 #: machine, the disk or the GPIO header, so they keep working with no internet.
 #: (Destructive tools are excluded separately, by their ``dangerous`` flag.)
 OFFLINE_CATEGORIES = frozenset(
-    {"utilities", "system", "files", "memory", "identity", "hardware"}
+    {"utilities", "system", "files", "memory", "identity", "hardware", "media"}
 )
 
 OFFLINE_HINT = (
     "I'm running offline right now, so I can only handle time, dates, calculations, "
-    "unit conversions, system status, notes, reminders, your GPIO devices and anything "
-    "I already remember. Add an AI provider key (or start a local Ollama model) and "
-    "I'll be fully back."
+    "unit conversions, system status, notes, reminders, your GPIO devices, music and "
+    "video playback (play, pause, skip, volume) and anything I already remember. "
+    "Add an AI provider key (or start a local Ollama model) and I'll be fully back."
 )
 
 
@@ -67,6 +67,7 @@ class OfflineEngine:
             "time and date",
             "calculations and unit conversions",
             "system status (CPU, RAM, disk, temperature, network)",
+            "media control - play, pause, skip, volume, what's on",
             "GPIO devices (listing, reading sensors, switching outputs)",
             "reading and searching local files",
             "notes, reminders and local memory",

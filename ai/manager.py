@@ -66,6 +66,14 @@ class ProviderHealth:
     last_used: float = 0.0
     last_latency_ms: int = 0
     cooldown_until: float = 0.0
+    # what the console needs to explain a red node and how to fix it
+    # (the environment variable *name* is deliberately never serialised: the
+    #  console links to the provider's key page, /docs lists the exact names)
+    docs: str = ""
+    requires_key: bool = False
+    keyless: bool = False
+    free_tier: bool = True
+    timeout: float = 45.0
 
     def to_dict(self, now: Optional[float] = None) -> Dict[str, Any]:
         now = time.time() if now is None else now
@@ -90,6 +98,11 @@ class ProviderHealth:
             "last_error": self.last_error,
             "last_latency_ms": self.last_latency_ms,
             "cooldown_s": cooldown,
+            "docs": self.docs,
+            "requires_key": self.requires_key,
+            "keyless": self.keyless,
+            "free_tier": self.free_tier,
+            "timeout_s": self.timeout,
         }
 
 
@@ -144,7 +157,15 @@ class ProviderManager:
         self._health = {}
         for config in self.settings.ai.providers:
             health = ProviderHealth(
-                slug=config.slug, label=config.label, model=config.model, local=config.local
+                slug=config.slug,
+                label=config.label,
+                model=config.model,
+                local=config.local,
+                docs=config.docs,
+                requires_key=config.requires_key,
+                keyless=config.keyless,
+                free_tier=config.free_tier,
+                timeout=config.timeout,
             )
             if not config.usable:
                 # Keep it visible in the status panel so the user can see what to
@@ -261,7 +282,15 @@ class ProviderManager:
 
         failures: List[Tuple[str, str]] = []
         for provider, health in order:
-            attempts = 1 + (0 if provider.local else max(0, self.settings.ai.max_retries))
+            budget = provider.config.retries
+            if budget < 0:
+                budget = 0 if provider.local else max(0, self.settings.ai.max_retries)
+            attempts = 1 + budget
+            # A provider may cap its own patience: a keyless public endpoint must
+            # never hold the whole chain hostage for the global 45s timeout.
+            call_timeout = timeout
+            if provider.config.timeout and provider.config.timeout > 0:
+                call_timeout = min(timeout, provider.config.timeout)
             for attempt in range(attempts):
                 started = time.time()
                 try:
@@ -270,7 +299,7 @@ class ProviderManager:
                         system=system,
                         temperature=temperature,
                         max_tokens=max_tokens,
-                        timeout=timeout,
+                        timeout=call_timeout,
                     )
                     if not text or not text.strip():
                         raise ProviderBadResponse(provider.slug, "empty answer")

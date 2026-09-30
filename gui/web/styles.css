@@ -151,6 +151,26 @@ body[data-boot="off"] .boot { display: none; }
   text-transform: uppercase;
   color: var(--muted);
 }
+/* the boot screen prints the real readings, once the brain has answered */
+.boot-log {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 76px;
+}
+.boot-log li {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  animation: feed-in 0.22s ease both;
+}
+.boot-log li b { color: var(--cyan); font-weight: 600; }
+.boot-log li::before { content: "› "; color: var(--muted); }
 .boot.done { animation: boot-out 0.45s ease forwards; }
 @keyframes boot-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes boot-out { from { opacity: 1; } to { opacity: 0; } }
@@ -367,6 +387,31 @@ body[data-state="error"] .orb-core { background: radial-gradient(circle at 40% 3
   mask: radial-gradient(closest-side, transparent 88%, #000 89%, #000 100%);
   animation: spin 40s linear infinite;
 }
+/* the neural core: a canvas of orbiting particles under the rings.  It is the
+   AI's own face - it breathes when idle, spikes when listening, links up into a
+   firing network while thinking and ripples out waves as it speaks. */
+.reactor canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+.reactor-sweep {
+  inset: 2%;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg,
+    rgba(56, 214, 255, 0.34) 0deg, rgba(56, 214, 255, 0.06) 26deg, transparent 62deg);
+  -webkit-mask: radial-gradient(closest-side, transparent 30%, #000 42%, #000 92%, transparent 100%);
+  mask: radial-gradient(closest-side, transparent 30%, #000 42%, #000 92%, transparent 100%);
+  animation: spin 4.6s linear infinite;
+  opacity: 0.75;
+}
+body[data-state="idle"] .reactor-sweep { opacity: 0.4; animation-duration: 7s; }
+body[data-state="thinking"] .reactor-sweep,
+body[data-state="working"] .reactor-sweep { opacity: 1; animation-duration: 1.9s; }
+body[data-state="listening"] .reactor-sweep { animation-duration: 3.2s; }
+body[data-state="speaking"] .reactor-sweep { animation-duration: 2.4s; }
 .reactor-core {
   inset: 34%;
   background: radial-gradient(circle at 42% 36%, #ffffff, #9df3ff 42%, var(--cyan) 72%);
@@ -411,6 +456,115 @@ body[data-state="working"] .state-label { color: var(--amber); }
 body[data-state="speaking"] .state-label { color: var(--violet); }
 body[data-state="error"] .state-label { color: var(--red); }
 .state-note { margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------------------------------------------------------------- engine bank */
+/* The live brains, one chip each: a glowing node per provider that can answer
+   right now, the one holding this turn lit up, the keyless public endpoint
+   clearly marked.  Redundancy you can see instead of a claim you must trust. */
+.engines {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: linear-gradient(90deg, rgba(56, 214, 255, 0.07), rgba(4, 12, 21, 0.34));
+  overflow: hidden;
+}
+.engines-label { flex: none; color: var(--cyan); opacity: 0.75; }
+.engines-list { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.engines-note {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.engine {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: rgba(6, 16, 26, 0.72);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  animation: feed-in 0.22s ease both;
+}
+.engine::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 7px currentColor;
+}
+.engine b { color: #eafcff; font-weight: 600; letter-spacing: 0.08em; }
+.engine[data-tone="ok"] { color: #9df3d2; border-color: rgba(52, 226, 164, 0.45); }
+.engine[data-tone="keyless"] { color: var(--amber); border-style: dashed; border-color: rgba(245, 182, 66, 0.5); }
+.engine[data-tone="off"] { color: var(--muted); border-style: dashed; opacity: 0.8; }
+.engine .engine-tag { color: var(--muted); letter-spacing: 0.1em; }
+/* the brain answering this turn: halo + slow pulse */
+.engine.is-active {
+  border-color: var(--cyan);
+  background: linear-gradient(180deg, rgba(56, 214, 255, 0.22), rgba(56, 214, 255, 0.06));
+  box-shadow: 0 0 0 1px rgba(56, 214, 255, 0.2), var(--glow);
+  animation: engine-pulse 2.6s ease-in-out infinite;
+}
+.engine.is-active b { color: #f2feff; }
+@keyframes engine-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(56, 214, 255, 0.2), var(--glow); }
+  50% { box-shadow: 0 0 0 1px rgba(56, 214, 255, 0.34), 0 0 18px rgba(56, 214, 255, 0.35); }
+}
+
+/* ------------------------------------------------------- cognition trace */
+/* The pipeline narrating itself: real states, real tools, real timings, in the
+   order they happened.  This is what "thinking" honestly looks like. */
+.trace {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed rgba(56, 214, 255, 0.22);
+  background: linear-gradient(90deg, rgba(6, 18, 29, 0.72), rgba(4, 12, 21, 0.4));
+  overflow: hidden;
+}
+.trace-label { flex: none; color: var(--cyan); opacity: 0.75; }
+.trace-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  min-height: 15px;
+  min-width: 0;
+}
+.trace-list li {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  animation: feed-in 0.2s ease both;
+  white-space: nowrap;
+}
+.trace-list li::before { content: "\203A "; color: var(--muted); }
+.trace-list li b { color: var(--cyan); font-weight: 600; }
+.trace-list li[data-tone="ok"] { color: #b6ffe6; }
+.trace-list li[data-tone="busy"] { color: #ffe6b8; }
+.trace-list li[data-tone="warn"] { color: #ffd9d9; }
+.trace-empty { color: var(--muted); }
 
 /* microphone level: scaleY only, so it stays cheap on a Pi */
 .level { display: flex; align-items: center; gap: 3px; height: 18px; }
@@ -497,6 +651,9 @@ body[data-state="idle"] .level { opacity: 0.45; }
   font-family: var(--mono);
 }
 .msg.intro .msg-body { border-left: 2px solid var(--amber); }
+/* JARVIS's own replies carry the core's colour down the left edge */
+.msg.assistant .msg-body { border-left: 2px solid rgba(56, 214, 255, 0.42); }
+.msg.assistant .msg-body:hover { border-left-color: var(--cyan); }
 
 .msg-head {
   display: flex;
@@ -852,6 +1009,65 @@ body[data-live="on"] #btn-live {
   color: var(--muted);
 }
 
+/* --------------------------------------------------- now playing + transport */
+.now-playing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  margin-bottom: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: linear-gradient(90deg, rgba(157, 140, 255, 0.12), rgba(6, 16, 26, 0.7));
+}
+.np-disc {
+  position: relative;
+  width: 30px; height: 30px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid rgba(169, 243, 255, 0.4);
+  background:
+    repeating-linear-gradient(90deg, rgba(169, 243, 255, 0.16) 0 1px, transparent 1px 3px),
+    radial-gradient(circle, #0b2231 30%, #071620 70%);
+}
+.np-disc i {
+  position: absolute;
+  inset: 12px;
+  border-radius: 50%;
+  background: var(--violet);
+  box-shadow: 0 0 8px var(--violet);
+}
+body[data-media="playing"] .np-disc { animation: spin 3.6s linear infinite; }
+body[data-media="playing"] .np-disc i { background: var(--green); box-shadow: 0 0 10px var(--green); }
+.np-text { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.np-title {
+  font-size: 12.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.np-meta {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body[data-media="playing"] .np-title { color: #d8ffe9; }
+
+.transport { display: flex; gap: 6px; margin-bottom: 8px; }
+.ctl.compact {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 4px;
+  border-radius: 9px;
+}
+.ctl.compact svg { width: 16px; height: 16px; }
+
 .stats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .stat {
   border: 1px solid var(--line);
@@ -865,6 +1081,100 @@ body[data-live="on"] #btn-live {
   color: var(--text-dim);
 }
 .stat b { color: var(--cyan); font-weight: 650; }
+
+/* ------------------------------------------------------ fallback chain */
+.chain-head { display: flex; gap: 8px; margin-bottom: 8px; }
+.chain-note {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.chain { list-style: none; margin: 0 0 4px; padding: 0 0 0 4px; position: relative; }
+.node {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px 7px 14px;
+  margin-bottom: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: rgba(6, 16, 26, 0.7);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+/* the connector: each node is wired to the next one in the chain */
+.node::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  bottom: -11px;
+  width: 1px;
+  background: linear-gradient(180deg, rgba(56, 214, 255, 0.4), rgba(56, 214, 255, 0.08));
+}
+.node:last-child::before { display: none; }
+.node-dot {
+  width: 9px; height: 9px; flex: none;
+  border-radius: 50%;
+  background: #33505f;
+  position: relative;
+  left: -6px;
+}
+.node[data-tone="ok"] { border-color: rgba(52, 226, 164, 0.34); }
+.node[data-tone="ok"] .node-dot { background: var(--green); box-shadow: 0 0 9px var(--green); }
+.node[data-tone="busy"] { border-color: rgba(245, 182, 66, 0.38); }
+.node[data-tone="busy"] .node-dot { background: var(--amber); box-shadow: 0 0 9px var(--amber); animation: pulse 1.4s ease-in-out infinite; }
+.node[data-tone="warn"] { border-color: rgba(255, 93, 93, 0.4); }
+.node[data-tone="warn"] .node-dot { background: var(--red); box-shadow: 0 0 9px var(--red); }
+.node[data-tone="off"] { opacity: 0.72; border-style: dashed; }
+/* the brain that is answering right now gets the halo */
+.node[data-active="true"] {
+  border-color: var(--cyan);
+  background: linear-gradient(90deg, rgba(56, 214, 255, 0.14), rgba(6, 16, 26, 0.6));
+  box-shadow: 0 0 0 1px rgba(56, 214, 255, 0.18), var(--glow);
+}
+.node[data-active="true"] .node-dot { background: var(--cyan); box-shadow: 0 0 12px var(--cyan); }
+.node-name { flex: none; font-size: 12.5px; color: var(--text); }
+.node-meta {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-key {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--amber);
+  border: 1px solid rgba(245, 182, 66, 0.42);
+  border-radius: 999px;
+  padding: 3px 8px;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.node-key:hover { color: #fff6e4; border-color: var(--amber); background: rgba(245, 182, 66, 0.14); }
+.node-flag {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  border: 1px solid rgba(56, 214, 255, 0.3);
+  border-radius: 999px;
+  padding: 2px 7px;
+}
 
 .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .list li {
@@ -998,6 +1308,7 @@ body[data-live="on"] #btn-live {
   .hero { width: 66px; height: 66px; }
   .hero-core { inset: 23px; font-size: 14px; }
   .state-note { display: none; }
+  .engines-note { display: none; }
   .core-word { letter-spacing: 0.22em; }
 }
 

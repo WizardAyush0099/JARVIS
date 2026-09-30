@@ -400,6 +400,44 @@ def create_app(settings: Optional[Settings] = None, jarvis: Optional[Jarvis] = N
         await asyncio.to_thread(state.jarvis.interrupt)
         return {"ok": True, "state": state.jarvis.events.state}
 
+    @app.get("/api/media", response_class=JSONResponse)
+    async def api_media(
+        request: Request,
+        player: str = Query(default=""),
+        x_jarvis_token: Optional[str] = Header(default=None),
+        token: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        """What is playing on this machine right now (MPRIS, via playerctl).
+
+        Read straight from the media player, so the console can show the real
+        track - and say honestly when there is nothing to show.
+        """
+        require_token(request, x_jarvis_token, token)
+        from tools.media import snapshot
+
+        return await asyncio.to_thread(snapshot, player)
+
+    @app.post("/api/media", response_class=JSONResponse)
+    async def api_media_control(
+        request: Request,
+        payload: Dict[str, Any] = Body(default={}),
+        x_jarvis_token: Optional[str] = Header(default=None),
+        token: Optional[str] = Query(default=None),
+    ) -> Dict[str, Any]:
+        """The console's transport buttons: play, pause, next, previous, volume."""
+        require_token(request, x_jarvis_token, token)
+        from tools.media import apply_action, snapshot
+
+        data = payload or {}
+        action = str(data.get("action") or "").strip()
+        player = str(data.get("player") or "").strip()
+        try:
+            level = int(data.get("level") or 0)
+        except (TypeError, ValueError):
+            level = 0
+        ok, message = await asyncio.to_thread(apply_action, action, player, level)
+        return {"ok": ok, "message": message, "now": await asyncio.to_thread(snapshot, player)}
+
     @app.post("/api/transcribe", response_class=JSONResponse)
     async def api_transcribe(
         request: Request,
@@ -562,13 +600,38 @@ def render_docs_page(settings: Optional[Settings] = None) -> str:
         present = module_present(name, package)
         rows.append(_check_row(package, "installed" if present else f"missing - {purpose}", "ok" if present else "warn"))
 
-    providers = [
-        f"{item.slug}: {'ready' if item.usable else 'needs a key'}" for item in settings.ai.providers
-    ]
+    providers = []
+    for item in settings.ai.providers:
+        if item.keyless:
+            providers.append(f"{item.slug}: ready (no key needed)")
+        elif item.usable:
+            providers.append(f"{item.slug}: ready")
+        else:
+            providers.append(f"{item.slug}: needs {item.key_env or 'a key'}")
     rows.append(_check_row("AI providers", htmllib.escape(", ".join(providers) or "none")))
     rows.append(_check_row("voice output", htmllib.escape(f"{settings.tts.engine} ({settings.tts.voice_output})")))
     stt_state = settings.stt.engine if settings.stt.enabled else f"{settings.stt.engine} (disabled)"
     rows.append(_check_row("voice input", htmllib.escape(stt_state)))
+    from tools.media import playerctl_path
+
+    has_media = playerctl_path() is not None
+    rows.append(
+        _check_row(
+            "media control",
+            "playerctl available (play/pause/skip for Spotify, browsers, VLC)"
+            if has_media
+            else "playerctl missing - sudo apt install playerctl",
+            "ok" if has_media else "warn",
+        )
+    )
+    rows.append(
+        _check_row(
+            "spotify link",
+            "linked (liked songs + playback control)" if settings.spotify.configured
+            else "not linked - optional, run scripts/spotify_auth.py",
+            "ok" if settings.spotify.configured else "",
+        )
+    )
     rows.append(_check_row("web token", "set" if settings.web.token else "not set - anyone on your network can use JARVIS", "ok" if settings.web.token else "warn"))
     rows.append(_check_row("listening on", htmllib.escape(f"{settings.web.host}:{settings.web.port}")))
     rows.append(_check_row("project root", htmllib.escape(str(settings.paths.root))))

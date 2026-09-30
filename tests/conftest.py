@@ -29,10 +29,16 @@ _SECRET_KEYS = (
     "CEREBRAS_API_KEY",
     "MISTRAL_API_KEY",
     "DEEPSEEK_API_KEY",
+    "NVIDIA_API_KEY",
+    "XAI_API_KEY",
+    "HF_TOKEN",
     "TAVILY_API_KEY",
     "BRAVE_API_KEY",
     "SMTP_PASSWORD",
     "SMTP_USER",
+    "SPOTIFY_CLIENT_ID",
+    "SPOTIFY_CLIENT_SECRET",
+    "SPOTIFY_REFRESH_TOKEN",
 )
 
 
@@ -42,6 +48,10 @@ def _no_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("AI_PROVIDERS", "gemini,groq,openrouter")
     monkeypatch.setenv("OLLAMA_ENABLED", "false")
+    # The keyless cloud fallback is on by default, but a test run must never
+    # touch the network: tests that care about it switch it back on explicitly.
+    monkeypatch.setenv("POLLINATIONS_ENABLED", "false")
+    monkeypatch.setenv("LMSTUDIO_ENABLED", "false")
     monkeypatch.setenv("EMAIL_ENABLED", "false")
     monkeypatch.setenv("TTS_ENABLED", "false")
     monkeypatch.setenv("STT_ENABLED", "false")

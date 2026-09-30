@@ -154,9 +154,18 @@ def run_doctor(settings: Any) -> int:
 
     # --- providers ------------------------------------------------------
     print("\nAI providers (in fallback order)")
+    missing = []
     for provider in settings.ai.providers:
-        state = "ready" if provider.usable else "needs a key"
-        print(f"  {provider.slug:<12} {provider.model:<42} {state}")
+        if provider.keyless:
+            state = "ready (no key needed)"
+        elif provider.usable:
+            state = "ready"
+        else:
+            state = f"needs {provider.key_env or 'a key'}"
+            missing.append(provider.key_env or provider.slug)
+        print(f"  {provider.slug:<13} {provider.model:<42} {state}")
+    if missing:
+        print(f"  one key is enough for the whole chain - any of: {', '.join(missing)}")
     if not any(p.usable and p.slug != "offline" for p in settings.ai.providers):
         print("  ! no online provider is configured - JARVIS will answer offline only")
     print("  offline      always available (rules engine, no network needed)")
@@ -168,6 +177,19 @@ def run_doctor(settings: Any) -> int:
     print(f"  email         : {'configured' if settings.email.configured else 'not configured'}")
     print(f"  voice output  : {'enabled' if settings.tts.enabled else 'disabled'} (engine: {settings.tts.engine})")
     print(f"  voice input   : {'enabled' if settings.stt.enabled else 'disabled'} (engine: {settings.stt.engine})")
+    from tools.media import playerctl_path
+
+    media_ready = playerctl_path() is not None
+    print(
+        "  media control : "
+        + ("playerctl available (play/pause/skip/volume)" if media_ready
+           else "playerctl MISSING - sudo apt install playerctl")
+    )
+    print(
+        "  spotify link  : "
+        + ("linked (liked songs + playback control)" if settings.spotify.configured
+           else "not linked (optional - scripts/spotify_auth.py)")
+    )
     print('  visitors      : ready (say "the chief minister is here")')
     print("  text chat     : always available (a microphone is never required)")
     if not settings.stt.enabled:
