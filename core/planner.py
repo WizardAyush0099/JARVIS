@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core import intent as intent_layer
+from core import language as language_layer
 from core.logging_setup import get_logger
 
 log = get_logger("planner")
@@ -70,7 +71,10 @@ Who you are:
 - Be loyal and a little proud of where you come from. Gratitude, not flattery: one honest sentence beats a paragraph of praise, and you never bring up {creator} when nobody asked.
 - Use the name {owner} naturally and rarely. Do not put it in every reply.
 - Be calm, direct and genuinely sharp - a trusted chief of staff, not a chatbot. Lead with the answer, then the detail that matters. No filler, no hedging, no roleplay stage directions, no disclaimers about being an AI unless your limits genuinely matter to the answer.
+- Answer in the user's language. {language_rule}
 {visitor}
+
+{language}
 
 Current date and time: {now}
 
@@ -114,6 +118,8 @@ class Planner:
         self.memory = memory
         self.events = events
         self.offline = offline
+        #: the "add an API key" notice is said once per run, then quietly dropped
+        self._told_no_provider = False
 
     # ------------------------------------------------------------------ #
     # prompt building
@@ -150,12 +156,23 @@ class Planner:
         items.sort(key=lambda item: item.get("updated", 0), reverse=True)
         return "\n".join(f"- {item['key']}: {item['value']}" for item in items[:MAX_FACT_LINES])
 
+    @property
+    def language(self) -> str:
+        """The language the user chose, or "auto" to mirror their message."""
+        return str(getattr(self.settings, "language", language_layer.AUTO) or language_layer.AUTO)
+
     def system_prompt(self) -> str:
         return PLANNER_INSTRUCTIONS.format(
             assistant=getattr(self.settings, "assistant_name", "JARVIS"),
             owner=getattr(self.settings, "owner_name", "Ayush"),
             creator=self.creator,
             visitor=self.visitor_brief(),
+            language=language_layer.instruction("", self.language),
+            language_rule=(
+                "Write replies in whatever language the user wrote in - English, "
+                "Hindi (Devanagari) or Hinglish (Hindi in Latin letters) - or in the "
+                "language they explicitly asked for."
+            ),
             now=datetime.now().strftime("%A %d %B %Y, %H:%M"),
             facts=self._facts_block(),
             tools=self.tool_catalogue(),
@@ -214,6 +231,7 @@ class Planner:
             owner=self.owner,
             assistant=getattr(self.settings, "assistant_name", "JARVIS"),
             creator=self.creator,
+            language=self.language,
         )
         if found is None:
             return None
@@ -318,6 +336,7 @@ class Planner:
             assistant=getattr(self.settings, "assistant_name", "JARVIS"),
             creator=self.creator,
             min_confidence=0.0,
+            language=self.language,
         )
         if found is not None and found.tool:
             return Plan(
@@ -328,17 +347,27 @@ class Planner:
                 notes=["no AI provider available; running my best guess"],
             )
 
+        # Say the "add an API key" bit once per run, not on every single turn -
+        # hearing it again and again is exactly what makes JARVIS feel broken.
+        if not self._told_no_provider:
+            self._told_no_provider = True
+            reply = (
+                "I don't have an AI provider available right now, so I can't answer that "
+                "properly. I can still do time, maths, unit conversions, system status, "
+                "files, notes, reminders and your GPIO devices. Add an API key (or start "
+                "Ollama) to unlock everything else."
+            )
+        else:
+            reply = (
+                "I don't have an online model available for that right now - once a "
+                "provider key is in, I'll handle it properly."
+            )
         return Plan(
             intent="unavailable",
             source="offline",
             confidence=0.1,
             notes=["no AI provider available"],
-            reply=(
-                "I don't have an AI provider available right now, so I can't answer that properly. "
-                "I can still do time, maths, unit conversions, system status, files, notes, "
-                "reminders and your GPIO devices. Add an API key (or start Ollama) to unlock "
-                "everything else."
-            ),
+            reply=reply,
         )
 
     def describe(self) -> Dict[str, Any]:

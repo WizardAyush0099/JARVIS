@@ -890,6 +890,7 @@ Everything is optional and lives in `.env` (see [`env.example`](env.example)).
 |---|---|---|
 | `JARVIS_NAME` / `JARVIS_OWNER` | `JARVIS` / `Ayush` | identity used in prompts and replies |
 | `JARVIS_CREATOR` | value of `JARVIS_OWNER` | who built JARVIS; "who made you" answers with this name |
+| `JARVIS_LANGUAGE` | `auto` | language JARVIS answers in: `auto` (mirror the message), `en`, `hi` or `hinglish`. You can also just say "speak in hindi" in chat - write in Hindi / Hinglish and JARVIS answers in kind |
 | `AI_PROVIDERS` | `gemini,groq,openrouter` | fallback order hint; every provider with a key joins the chain anyway |
 | `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `TOGETHER_API_KEY`, `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`, `SAMBANOVA_API_KEY`, `NVIDIA_API_KEY`, `HF_TOKEN`, `XAI_API_KEY` | – | provider keys; each one is another fallback |
 | `OLLAMA_ENABLED`, `OLLAMA_MODEL` | `false` | fully local model, no key, no internet |

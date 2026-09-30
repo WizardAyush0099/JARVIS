@@ -20,7 +20,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from core import language as lang_layer
 from core import visitors
+
 
 # --------------------------------------------------------------------------- #
 # model
@@ -101,17 +103,25 @@ def _first_group(pattern: str, text: str, flags: int = re.I) -> Optional[str]:
 # --------------------------------------------------------------------------- #
 # rules
 # --------------------------------------------------------------------------- #
+def _lang_code(text: str, ctx: Dict[str, Any]) -> str:
+    """The language a direct reply should be written in."""
+    return lang_layer.resolve(text, str(ctx.get("language") or ""))
+
+
 def _rule_greeting(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
     if re.fullmatch(
         r"(hi|hello|hey|yo|good (morning|afternoon|evening)|namaste|hola|are you there|you up)\b.*",
         text,
     ):
-        return Intent(
-            "greeting",
-            category="identity",
-            direct_reply=f"Systems online. What do you need, {ctx['owner']}?",
-            reason="greeting",
-        )
+        owner = ctx["owner"]
+        code = _lang_code(text, ctx)
+        if code == lang_layer.HINDI:
+            reply = f"सिस्टम ऑनलाइन है। बताइए, क्या करना है, {owner}?"
+        elif code == lang_layer.HINGLISH:
+            reply = f"Systems online. Bolo, kya karna hai, {owner}?"
+        else:
+            reply = f"Systems online. What do you need, {owner}?"
+        return Intent("greeting", category="identity", direct_reply=reply, reason="greeting")
     return None
 
 
@@ -218,17 +228,38 @@ def _rule_visitor(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
     return None
 
 
+_CAPABILITIES = {
+    lang_layer.ENGLISH: (
+        "I can check and control the system (CPU, RAM, disk, temperature, apps), search the web and "
+        "summarise pages, generate images, read and write files, take notes and reminders, switch and "
+        "read your GPIO devices, send email with your confirmation, do maths and conversions, "
+        "remember things about you, and explain, write or debug code."
+    ),
+    lang_layer.HINDI: (
+        "मैं सिस्टम देख और चला सकता हूँ (CPU, RAM, डिस्क, तापमान, ऐप्स), वेब पर खोज और पेज "
+        "का सार बता सकता हूँ, इमेज बना सकता हूँ, फाइलें पढ़-लिख सकता हूँ, नोट्स और रिमाइंडर रख "
+        "सकता हूँ, आपके GPIO डिवाइस पढ़ और चला सकता हूँ, आपकी अनुमति से ईमेल भेज सकता हूँ, "
+        "गणित और कन्वर्ज़न कर सकता हूँ, आपके बारे में चीज़ें याद रख सकता हूँ, और कोड लिख, "
+        "समझा या डीबग कर सकता हूँ।"
+    ),
+    lang_layer.HINGLISH: (
+        "Main system dekh aur chala sakta hoon (CPU, RAM, disk, temperature, apps), web "
+        "search karke page ka summary de sakta hoon, image bana sakta hoon, files padh-likh "
+        "sakta hoon, notes aur reminders rakh sakta hoon, aapke GPIO devices padh aur chala "
+        "sakta hoon, aapki permission se email bhej sakta hoon, maths aur conversions kar "
+        "sakta hoon, aapke baare mein cheezein yaad rakh sakta hoon, aur code likh, samjha "
+        "ya debug kar sakta hoon."
+    ),
+}
+
+
 def _rule_capabilities(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
     if re.search(r"\b(what can you do|your (?:capabilities|skills|features)|list commands|help me with|what are your commands)\b", text):
+        code = _lang_code(text, ctx)
         return Intent(
             "capabilities",
             category="identity",
-            direct_reply=(
-                "I can check and control the system (CPU, RAM, disk, temperature, apps), search the web and "
-                "summarise pages, generate images, read and write files, take notes and reminders, switch and "
-                "read your GPIO devices, send email with your confirmation, do maths and conversions, "
-                "remember things about you, and explain, write or debug code."
-            ),
+            direct_reply=_CAPABILITIES.get(code, _CAPABILITIES[lang_layer.ENGLISH]),
             reason="capabilities",
         )
     if text in {"help", "commands", "features"}:
@@ -962,16 +993,23 @@ def match(
     assistant: str = "JARVIS",
     creator: str = "",
     min_confidence: float = 0.7,
+    language: str = "auto",
 ) -> Optional[Intent]:
     """Return the deterministic intent for ``text``, or ``None``.
 
     ``None`` means "this needs real language understanding" - the planner will
-    ask the model instead.
+    ask the model instead.  ``language`` is the user's standing language
+    preference ("auto" mirrors their message).
     """
     query = normalize(text, assistant)
     if not query:
         return None
-    ctx = {"owner": owner, "assistant": assistant, "creator": creator or owner}
+    ctx = {
+        "owner": owner,
+        "assistant": assistant,
+        "creator": creator or owner,
+        "language": language or "auto",
+    }
     for rule in RULE_FUNCTIONS:
         try:
             intent = rule(query, ctx)

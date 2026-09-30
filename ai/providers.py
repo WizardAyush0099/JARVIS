@@ -317,12 +317,17 @@ class OfflineProvider(AIProvider):
             if message.get("role") == "user":
                 text = str(message.get("content", ""))
                 break
-        answer = self.engine.answer(text)
+        # `reply`, not `answer`: as a model fallback this must never execute a
+        # tool from whatever prompt it was handed (see OfflineEngine.reply).
+        answer = self.engine.reply(text)
         if not answer:
+            # Deliberately short and quiet.  The long "add an API key" pitch used
+            # to be returned here, which meant every single turn that fell back
+            # to the local engine repeated it - including turns where real tool
+            # results were waiting.  The one-time notice now lives in the planner.
             answer = (
-                "I'm running offline right now, so I can only handle time, dates, "
-                "calculations, unit conversions, system status and anything I already "
-                "remember. Add an API key (or start Ollama) and I'll be fully back."
+                "I don't have an online model available for that right now, and I "
+                "don't have a local answer for it either."
             )
         return answer
 

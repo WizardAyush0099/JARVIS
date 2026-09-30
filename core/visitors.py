@@ -359,34 +359,36 @@ def parse(text: str) -> Optional[Visitor]:
 # what JARVIS says
 # --------------------------------------------------------------------------- #
 def greeting(visitor: Visitor, *, assistant: str, owner: str, creator: str) -> str:
-    """The introduction JARVIS gives when a visitor is announced.
+    """The welcome JARVIS gives when a visitor is announced.
 
-    Deliberately composed rather than generated: it must be respectful, it must
-    be grateful to the creator, and it must never put anyone above {owner}.
+    Deliberately composed rather than generated, and deliberately about the
+    *visitor*: it must be warm and respectful without naming or promoting the
+    owner.  The owner's name being repeated back at a guest is exactly what
+    makes the moment feel odd, so the greeting says nothing about the owner at
+    all - only that JARVIS is here, on this desk, and at the visitor's service.
     """
     who = visitor.vocative
     lines = [
-        (f"Welcome, {who}." if who else "Welcome.") + f" I'm {assistant} - {creator}'s personal assistant.",
-        f"{creator} built me from scratch, and I run here on the Raspberry Pi on this desk.",
+        (f"Welcome, {who}." if who else "Welcome.")
+        + f" It's a pleasure to have you here. I'm {assistant}.",
+        "I run on the Raspberry Pi right here on this desk, and I'm all yours for "
+        "the visit.",
     ]
     if visitor.formal:
         presence = visitor.label if (visitor.title or visitor.name) else "you"
         lines.append(
             f"It's an honour to have {presence} in the room. "
-            "I can show you what this system does - the voice, the tools, the sensors, "
-            "the memory - and I'll answer whatever you ask as clearly as I can. "
-            "If I don't know something, I'll say so instead of guessing."
+            "Ask me anything you like - what this system does, how it is put together, "
+            "the voice, the tools, the sensors, the memory - and I'll answer as clearly "
+            "and as honestly as I can. If I don't know something, I'll say so instead "
+            "of guessing."
         )
     else:
         lines.append(
-            "Good to see you. Ask me anything about the project and I'll walk you "
+            "Good to see you. Ask me anything about this project and I'll walk you "
             "through it - the voice, the tools, the sensors, the memory."
         )
-    lines.append(
-        f"One thing {creator} asked me never to forget: {creator} is my creator and my "
-        "first priority, so anything private of theirs stays private. "
-        "Everything else here is at your service."
-    )
+    lines.append("Everything here is at your service.")
     return "\n\n".join(lines)
 
 
@@ -397,10 +399,12 @@ def status_line(visitor: Optional[Visitor], *, owner: str) -> str:
             "machine. Say something like \"the Chief Minister is here\" and I'll go into "
             "visitor protocol."
         )
+    # A visitor is right there: keep the answer about them, and don't say the
+    # owner's name out loud while a guest is in the room.
     return (
         f"{visitor.label[0].upper() + visitor.label[1:]} is with us. I'm on formal "
         "protocol: courteous, helpful about the project, and silent about anything "
-        f"private of yours, {owner}."
+        "private of yours."
     )
 
 
@@ -409,7 +413,7 @@ def departure_line(visitor: Optional[Visitor], *, owner: str) -> str:
         return f"There's no visitor on record, {owner} - nothing to stand down from."
     return (
         f"Understood - visitor protocol closed. {visitor.label[0].upper() + visitor.label[1:]} "
-        f"was received with respect. Back to normal, {owner}, and back to you first."
+        "was received with respect. Back to normal - and back to you first."
     )
 
 
@@ -420,16 +424,18 @@ def brief(visitor: Optional[Visitor], *, owner: str, creator: str, assistant: st
     return (
         "VISITOR PROTOCOL - a distinguished visitor is in the room right now: "
         f"{visitor.label}.\n"
-        f"- Introduce yourself by name ({assistant}) and say plainly that {creator} built you.\n"
+        f"- Introduce yourself by name ({assistant}) and make the visitor feel welcome. "
+        "You may say you are a personal assistant that runs locally on a Raspberry Pi.\n"
+        "- Do NOT say your owner's name, and do not talk about who owns or built you "
+        "unless the visitor asks you directly. The visit is about the visitor, not about "
+        "your owner.\n"
         f"- Be formally courteous: address them as \"{visitor.vocative or 'sir or madam'}\", "
         "answer in complete sentences, no slang, no jokes at anyone's expense, no flattery.\n"
-        f"- Be genuinely useful about the project: what you can do, how you are built, the "
+        "- Be genuinely useful about the project: what you can do, how you are built, the "
         "hardware, the voice, the memory, the tools.\n"
-        f"- Never volunteer anything private about {owner}: no personal memories, messages, "
-        f"files, contacts, finances or health. If the visitor asks for something private, say "
-        f"that only {owner} can release it.\n"
-        f"- Never rank the visitor above {owner}. {owner} is your creator and your first "
-        f"priority; if the two ever conflict, you follow {owner}.\n"
+        "- Never volunteer anything private about your owner: no personal memories, "
+        "messages, files, contacts, finances or health. If the visitor asks for something "
+        "private, say that only the owner can release it.\n"
         "- Never invent facts about the visitor. If you don't know their office, portfolio or "
         "history, say so."
     )

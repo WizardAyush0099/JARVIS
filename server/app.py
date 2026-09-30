@@ -348,6 +348,18 @@ def create_app(settings: Optional[Settings] = None, jarvis: Optional[Jarvis] = N
             )
         if state.jarvis.voice_output == "off":
             raise HTTPException(status_code=409, detail="the voice is muted")
+        if state.jarvis.voice_output != "browser":
+            # The engine is fine and the audio would be produced - it is simply
+            # going to the machine's own speaker, so handing it to this page as
+            # well would say everything twice.  Saying *that* beats the vague
+            # "could not produce audio" the caller used to get.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "the voice is going to JARVIS's own speaker right now - "
+                    "tap 'browser' under voice output to hear it in this page"
+                ),
+            )
         speech = await asyncio.to_thread(state.speech_for, text)
         if not speech:
             engine = state.jarvis.speaker.status()

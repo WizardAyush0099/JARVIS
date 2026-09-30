@@ -83,6 +83,26 @@ class OfflineEngine:
         }
 
     # -- answering ---------------------------------------------------------
+    def reply(self, text: str) -> Optional[str]:
+        """A conversational answer only - this one never runs a tool.
+
+        This is what the offline *provider* uses when it stands in for a
+        language model.  That path is handed whatever the caller's prompt was -
+        the user's request, but also composed blocks like the final-answer
+        prompt, which embeds the tool results themselves.  Running intents over
+        that text would fire real side effects (and overwrite real facts with
+        the prompt itself), so this path is deliberately side-effect free: it
+        only returns a canned direct reply or a stored memory.
+        """
+        if not text or not text.strip():
+            return None
+        found = intent_layer.match(
+            text, owner=self.owner, assistant=self.assistant, creator=self.creator
+        )
+        if found is not None and found.direct_reply:
+            return found.direct_reply
+        return self._memory_fallback(text)
+
     def answer(self, text: str, ctx: Any = None) -> Optional[str]:
         """Best-effort offline reply, or ``None`` if this needs a real model."""
         if not text or not text.strip():

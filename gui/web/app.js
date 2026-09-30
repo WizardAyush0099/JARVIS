@@ -45,6 +45,7 @@
     micMuted: false,
     voiceMuted: false,
     voiceOut: storage.get("jarvis_voice_out", "browser"),
+    audioClaimed: false,
     voiceAvailable: false,
     voiceConfigured: false,
     micAvailable: false,
@@ -658,7 +659,7 @@
       "<p><strong>" + escapeHtml(identity.assistant) + "</strong> is online.</p>" +
       '<p class="muted" id="intro-credit">' +
       escapeHtml(creditText(identity.creator, identity.owner)) + "</p>" +
-      '<p class="muted">Type a message, press <strong>Mic</strong> to talk, or start ' +
+      '<p class="muted">Type a message, tap <strong>Talk</strong> to speak, or ' +
       "<strong>Live Talk</strong> for a hands-free conversation.</p>" +
       '<div class="suggestions" id="suggestions">' +
       ['system status', "what time is it", "search for Raspberry Pi 5 news",
@@ -1072,8 +1073,8 @@
       button("btn-mic").title = "No microphone on this machine - type your message instead";
       button("btn-live").title = "No microphone on this machine - type your message instead";
     } else {
-      button("btn-mic").title = "Hold a conversation turn: press, speak, press again";
-      button("btn-live").title = "Live Talk: keep listening and answering without pressing anything";
+      button("btn-mic").title = "One tap to talk, and the same tap to stop";
+      button("btn-live").title = "One tap for a hands-free conversation, same tap to stop";
     }
   }
 
@@ -1178,6 +1179,11 @@
     button("btn-voice-mute").setAttribute("aria-pressed", state.voiceMuted ? "true" : "false");
     button("btn-live").setAttribute("aria-pressed", state.live ? "true" : "false");
     button("btn-mic").setAttribute("aria-pressed", state.listening ? "true" : "false");
+    // one tap to start, the same tap to stop - and the button says which it is
+    var talkLabel = button("btn-mic").querySelector("span");
+    if (talkLabel) talkLabel.textContent = state.listening ? "Stop" : "Talk";
+    var liveLabel = button("btn-live").querySelector("span");
+    if (liveLabel) liveLabel.textContent = state.live ? "Stop live" : "Live Talk";
     var micLabel = button("btn-mic-mute").querySelector("span");
     if (micLabel) micLabel.textContent = state.micMuted ? "Mic off" : "Mic on";
     var voiceLabel = button("btn-voice-mute").querySelector("span");
@@ -1682,6 +1688,7 @@
 
   /** Mute / unmute JARVIS's voice. The backend owns the state, we just reflect it. */
   function toggleVoiceMute() {
+    state.audioClaimed = false; // the next snapshot may claim the audio again
     api("/api/speech", { method: "POST", body: {} })
       .then(function (payload) {
         state.voiceMuted = payload.mode === "off";
@@ -1701,6 +1708,7 @@
 
   function setVoiceOut(mode) {
     state.voiceOut = mode;
+    state.audioClaimed = false;
     storage.set("jarvis_voice_out", mode);
     setControls();
     api("/api/speech", { method: "POST", body: { mode: mode } })
@@ -1985,16 +1993,32 @@
     }
   }
 
+  /** The output the user picked, remembered per browser.
+   *
+   * Deliberately not `state.voiceOut`: `applySnapshot` copies whatever the
+   * *server* is currently doing into that, so a fresh console on a Pi whose
+   * default is its own speaker read "device" here, refused to claim the audio,
+   * and every reply was silent - /api/speak answered 502 and a Pi with no sound
+   * card had nothing to play either. Only an explicit choice may keep the voice
+   * on the device.
+   */
+  function voicePreference() {
+    return storage.get("jarvis_voice_out", "browser");
+  }
+
   /** A web client plays the voice itself, so claim it from the Pi's speaker. */
   function claimBrowserAudio() {
-    if (state.voiceMuted || state.voiceOut === "device") return;
+    if (state.audioClaimed) return;
+    if (state.voiceMuted || voicePreference() !== "browser") return;
     if (!state.voiceAvailable || !state.voiceConfigured) return;
+    if (state.voiceOut === "browser") return; // already ours
+    state.audioClaimed = true; // one attempt per user action, not per snapshot
     api("/api/speech", { method: "POST", body: { mode: "browser" } })
       .then(function (payload) {
         state.voiceOut = payload.mode === "off" ? state.voiceOut : payload.mode;
         setControls();
       })
-      .catch(function () {});
+      .catch(function () { state.audioClaimed = false; });
   }
 
   /* ---------------------------------------------------------------- wiring */
