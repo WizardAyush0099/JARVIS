@@ -17,6 +17,7 @@ import argparse
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -55,6 +56,12 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--gui", action="store_true", help="open the Tkinter desktop window")
     mode.add_argument("--cli", action="store_true", help="text-only terminal session")
     mode.add_argument("--check", "--doctor", action="store_true", dest="check", help="diagnose the install and exit")
+    mode.add_argument(
+        "--probe",
+        action="store_true",
+        help="actually call every AI provider and report the real error "
+             "(implies --check; use this when providers show as unavailable)",
+    )
 
     parser.add_argument("--host", default=None, help="bind address (default: from .env, 0.0.0.0)")
     parser.add_argument("--port", type=int, default=None, help="port (default: from .env, 8765)")
@@ -93,7 +100,91 @@ def load_settings(args: argparse.Namespace):
 # --------------------------------------------------------------------------- #
 # doctor
 # --------------------------------------------------------------------------- #
-def run_doctor(settings: Any) -> int:
+def _probe_hint(slug: str, kind: str, message: str) -> str:
+    """Turn a raw provider failure into the thing the owner can actually do."""
+    text = f"{kind} {message}".lower()
+    if "empty completion" in text or "max_tokens" in text:
+        return (
+            "the model used its whole token budget reasoning and returned nothing. "
+            "Raise AI_MAX_TOKENS in .env (900 or more), or pick a non-reasoning model"
+        )
+    if "insufficient balance" in text or "402" in text:
+        return "the key works but the account has no credit - top up, or remove the key"
+    if "credentials rejected" in text or "401" in text:
+        if slug == "gemini":
+            return (
+                "Google rejected the key. Check the clock first - Google refuses a "
+                "key when the system time is wrong: `sudo timedatectl set-ntp true`"
+            )
+        return "the key is wrong or revoked - copy it again from the provider's dashboard"
+    if "rate limit" in text or "quota" in text or "429" in text:
+        return "the key works but you are out of quota - it recovers on its own"
+    if "service unavailable" in text or "503" in text or "503" in kind:
+        return "the provider is overloaded right now - temporary, try again shortly"
+    if "model not found" in text:
+        return (
+            "this model id is retired. Delete the *_MODEL line from .env to use the "
+            "default, or run with --probe to see which model JARVIS settled on"
+        )
+    if "timeout" in text or "timed out" in text:
+        return "no answer in time - check the Pi's internet connection or DNS"
+    if "network" in text or "resolve" in text or "urlerror" in text:
+        return "the Pi could not reach the provider - check the connection and DNS"
+    return ""
+
+
+def _probe_providers(settings: Any) -> bool:
+    """Call every provider for real.  Configuration alone never tells the truth.
+
+    A provider can be perfectly configured and still fail: the key can be
+    revoked, the model retired, the account out of credit or the vendor simply
+    overloaded.  Only a live call separates those.
+    """
+    from ai.providers import build_provider, classify_http_error
+
+    print("\nLive provider test (real API calls, a few seconds each)")
+    print("-" * 58)
+    working = 0
+    for config in settings.ai.providers:
+        if config.kind == "offline":
+            continue
+        if not config.usable:
+            print(f"  {config.slug:<13} SKIPPED  no key set ({config.key_env or 'n/a'})")
+            continue
+        provider = build_provider(config)
+        started = time.time()
+        try:
+            # The real budget, not a token-sized one: reasoning models (Gemini,
+            # the Nemotron family) spend the first tokens thinking, and a tiny
+            # budget reports a perfectly healthy provider as broken.
+            provider.chat(
+                [{"role": "user", "content": "Reply with one word: pong"}],
+                system="health check",
+                temperature=0.0,
+                max_tokens=max(256, settings.ai.max_tokens),
+                timeout=min(60.0, settings.ai.timeout),
+            )
+        except Exception as exc:  # noqa: BLE001 - the point is to report it
+            error = classify_http_error(config.slug, exc)
+            took = int((time.time() - started) * 1000)
+            print(f"  {config.slug:<13} FAILED   {error.message}  ({took}ms)")
+            hint = _probe_hint(config.slug, config.kind, error.message)
+            if hint:
+                print(f"                 -> {hint}")
+            continue
+        took = int((time.time() - started) * 1000)
+        working += 1
+        print(f"  {config.slug:<13} ANSWERS  {config.model}  ({took}ms)")
+    print("-" * 58)
+    if working:
+        print(f"  {working} provider(s) answered, so JARVIS can think.")
+    else:
+        print("  No provider answered. Facts will still come from Wikipedia;")
+        print("  commands and tools work regardless.")
+    return working > 0
+
+
+def run_doctor(settings: Any, probe: bool = False) -> int:
     """Print a plain-language health report.  Returns a process exit code."""
     ok = True
     print(BANNER)
@@ -170,6 +261,8 @@ def run_doctor(settings: Any) -> int:
     if not any(p.usable and p.slug != "offline" for p in settings.ai.providers):
         print("  ! no online provider is configured - JARVIS will answer offline only")
     print("  offline      always available (rules engine, no network needed)")
+    if probe:
+        _probe_providers(settings)
 
     # --- features -------------------------------------------------------
     print("\nFeatures")
@@ -452,8 +545,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "JARVIS %s starting (mode=%s)", VERSION, "check" if args.check else "run"
     )
 
-    if args.check:
-        return run_doctor(settings)
+    if args.check or args.probe:
+        return run_doctor(settings, probe=args.probe)
     if args.gui:
         return run_gui(settings, args)
     if args.cli:
