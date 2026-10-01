@@ -59,6 +59,12 @@ NON_CHAT_MARKERS = (
 #: Markers of a small, fast model - the sensible default on a Raspberry Pi.
 FAST_MODEL_MARKERS = ("flash", "lite", "mini", "small", "turbo", "instant")
 
+#: How many model ids to try before giving a provider up.  A vendor's model
+#: list can be stale - Google still advertises ``gemini-2.5-flash`` while the
+#: generateContent endpoint rejects it - so the first substitute is sometimes
+#: dead too, and stopping there would report a perfectly good provider broken.
+MAX_MODEL_SWITCHES = 3
+
 
 def _tokens(model: str) -> List[str]:
     """Split a model id into comparable words ("gemini-3.5-flash" -> 3 words)."""
@@ -98,14 +104,18 @@ def looks_like_missing_model(error: Any) -> bool:
     return any(hint in message for hint in MISSING_MODEL_HINTS)
 
 
-def pick_model(available: Sequence[str], preferred: str) -> Optional[str]:
+def pick_model(
+    available: Sequence[str], preferred: str, exclude: Sequence[str] = ()
+) -> Optional[str]:
     """Choose the best available substitute for a retired ``preferred`` id.
 
     Keeps the vendor's intent when we can (same family), and otherwise prefers
     a small, fast model - a Pi assistant wants the quick answer, not the
-    largest one the vendor sells.
+    largest one the vendor sells.  ``exclude`` holds ids already found to be
+    dead, so a stale vendor listing cannot send us round in circles.
     """
-    ids = [m for m in available if m]
+    blocked = {str(item).lower() for item in exclude}
+    ids = [m for m in available if m and m.lower() not in blocked]
     if not ids:
         return None
     if preferred and preferred in ids:
@@ -217,18 +227,20 @@ class AIProvider(ABC):
         """The subset of :meth:`list_models` that can actually hold a chat."""
         return [m for m in self.list_models() if not is_non_chat_model(m)]
 
-    def adopt_available_model(self) -> bool:
+    def adopt_available_model(self, exclude: Sequence[str] = ()) -> bool:
         """Switch to a model this vendor really serves.  True if one was found.
 
         Called only after a missing-model rejection, so the extra request is
         worth it: the alternative is losing the provider for the whole run.
+        ``exclude`` lists ids already found to be dead - a vendor's own model
+        listing is not always a promise that the model still answers.
         """
         try:
             available = self.chat_models()
         except Exception as exc:  # noqa: BLE001 - discovery is best effort
             log.debug("%s: could not list models (%s)", self.slug, exc)
             return False
-        chosen = pick_model(available, self.config.model)
+        chosen = pick_model(available, self.config.model, exclude=exclude)
         if not chosen:
             return False
         log.warning(
@@ -521,6 +533,7 @@ def dumps_safe(payload: Any) -> str:
 __all__ = [
     "AIProvider",
     "AllProvidersFailed",
+    "MAX_MODEL_SWITCHES",
     "GeminiProvider",
     "Message",
     "OfflineProvider",

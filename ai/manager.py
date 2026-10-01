@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from ai.providers import (
     AIProvider,
     AllProvidersFailed,
+    MAX_MODEL_SWITCHES,
     OfflineProvider,
     ProviderAuthError,
     ProviderBadResponse,
@@ -287,7 +288,8 @@ class ProviderManager:
             if budget < 0:
                 budget = 0 if provider.local else max(0, self.settings.ai.max_retries)
             attempts = 1 + budget
-            healed = False
+            #: model ids already tried and found dead for this provider
+            tried: List[str] = []
             # A provider may cap its own patience: a keyless public endpoint must
             # never hold the whole chain hostage for the global 45s timeout.
             call_timeout = timeout
@@ -317,9 +319,11 @@ class ProviderManager:
                     # A retired model id is not the provider's fault and must not
                     # cost us the provider: ask it what it serves now, switch,
                     # and retry on the spot without burning the retry budget.
-                    if not healed and looks_like_missing_model(error):
-                        if provider.adopt_available_model():
-                            healed = True
+                    # Try more than one substitute - a vendor's model listing
+                    # can be stale, so the first replacement may be dead too.
+                    if looks_like_missing_model(error) and len(tried) < MAX_MODEL_SWITCHES:
+                        tried.append(provider.model)
+                        if provider.adopt_available_model(exclude=tried):
                             health.model = provider.model
                             if self.events is not None:
                                 self.events.publish(
@@ -330,6 +334,9 @@ class ProviderManager:
                                     model=provider.model,
                                 )
                             continue
+                        # Nothing left that this provider still serves: fall
+                        # through and record the real failure, so the reason
+                        # reaches the console instead of "no providers".
                     is_transient = isinstance(error, ProviderUnavailable)
                     if is_transient and attempt + 1 < attempts:
                         log.debug(

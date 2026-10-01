@@ -123,8 +123,8 @@ def _probe_hint(slug: str, kind: str, message: str) -> str:
         return "the provider is overloaded right now - temporary, try again shortly"
     if "model not found" in text:
         return (
-            "this model id is retired. Delete the *_MODEL line from .env to use the "
-            "default, or run with --probe to see which model JARVIS settled on"
+            "this model id is retired. Delete the *_MODEL line for this provider "
+            "from .env and JARVIS will use a model that exists"
         )
     if "timeout" in text or "timed out" in text:
         return "no answer in time - check the Pi's internet connection or DNS"
@@ -133,48 +133,91 @@ def _probe_hint(slug: str, kind: str, message: str) -> str:
     return ""
 
 
+def _pinned_models(settings: Any) -> List[str]:
+    """Which ``*_MODEL`` lines in .env are overriding JARVIS's own default.
+
+    This is the single most common cause of "no AI provider available": an .env
+    copied from an older release keeps pinning a model id the vendor has since
+    retired, and the pin quietly wins over the fixed default.
+    """
+    from config.settings import PROVIDER_PRESETS
+
+    pinned: List[str] = []
+    for config in settings.ai.providers:
+        default = PROVIDER_PRESETS.get(config.slug, {}).get("model")
+        if default and config.model and config.model != default:
+            pinned.append(f"{config.slug.upper()}_MODEL={config.model}")
+    return pinned
+
+
 def _probe_providers(settings: Any) -> bool:
     """Call every provider for real.  Configuration alone never tells the truth.
 
-    A provider can be perfectly configured and still fail: the key can be
-    revoked, the model retired, the account out of credit or the vendor simply
-    overloaded.  Only a live call separates those.
+    Each provider is probed through the *real* :class:`ProviderManager`, one at
+    a time, so the report shows what JARVIS would actually do - including the
+    automatic recovery from a retired model id.  Calling the provider directly
+    would hide exactly the behaviour the user is trying to find out about.
     """
-    from ai.providers import build_provider, classify_http_error
+    from ai.manager import ProviderManager
+    from ai.providers import AllProvidersFailed
+
+    pinned = _pinned_models(settings)
+    if pinned:
+        print("\n!! .env is overriding the shipped models - this is very likely your bug")
+        for line in pinned:
+            print(f"     {line}")
+        print("   Delete those lines (or set them to the models listed above) and retest.")
 
     print("\nLive provider test (real API calls, a few seconds each)")
     print("-" * 58)
     working = 0
-    for config in settings.ai.providers:
+    original = settings.ai.providers
+    for config in original:
         if config.kind == "offline":
             continue
         if not config.usable:
             print(f"  {config.slug:<13} SKIPPED  no key set ({config.key_env or 'n/a'})")
             continue
-        provider = build_provider(config)
+        # One provider per manager: no offline fallback to paper over a failure.
+        settings.ai.providers = [config]
+        manager = ProviderManager(settings)
         started = time.time()
+        reason = ""
         try:
             # The real budget, not a token-sized one: reasoning models (Gemini,
-            # the Nemotron family) spend the first tokens thinking, and a tiny
+            # the Nemotron family) spend the opening tokens thinking, and a tiny
             # budget reports a perfectly healthy provider as broken.
-            provider.chat(
+            answer = manager.chat(
                 [{"role": "user", "content": "Reply with one word: pong"}],
                 system="health check",
                 temperature=0.0,
                 max_tokens=max(256, settings.ai.max_tokens),
                 timeout=min(60.0, settings.ai.timeout),
             )
+            ok = bool(answer and answer.strip())
+        except AllProvidersFailed as exc:
+            ok = False
+            reason = "; ".join(f"{slug}: {why}" for slug, why in exc.failures) or str(exc)
         except Exception as exc:  # noqa: BLE001 - the point is to report it
-            error = classify_http_error(config.slug, exc)
-            took = int((time.time() - started) * 1000)
-            print(f"  {config.slug:<13} FAILED   {error.message}  ({took}ms)")
-            hint = _probe_hint(config.slug, config.kind, error.message)
-            if hint:
-                print(f"                 -> {hint}")
-            continue
+            ok = False
+            reason = str(exc)
+        finally:
+            settings.ai.providers = original
+
         took = int((time.time() - started) * 1000)
-        working += 1
-        print(f"  {config.slug:<13} ANSWERS  {config.model}  ({took}ms)")
+        settled = next((r.get("model") for r in manager.status() if r["slug"] == config.slug), "")
+        if ok:
+            working += 1
+            if settled and settled != config.model:
+                print(f"  {config.slug:<13} ANSWERS  {config.model} is retired -> "
+                      f"recovered on {settled}  ({took}ms)")
+            else:
+                print(f"  {config.slug:<13} ANSWERS  {config.model}  ({took}ms)")
+            continue
+        print(f"  {config.slug:<13} FAILED   {reason}  ({took}ms)")
+        hint = _probe_hint(config.slug, config.kind, reason)
+        if hint:
+            print(f"                 -> {hint}")
     print("-" * 58)
     if working:
         print(f"  {working} provider(s) answered, so JARVIS can think.")
