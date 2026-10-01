@@ -161,6 +161,73 @@ def test_real_failures_are_not_mistaken_for_a_retired_model():
 # --------------------------------------------------------------------------- #
 # choosing a replacement
 # --------------------------------------------------------------------------- #
+class StaleListingProvider(OpenAICompatProvider):
+    """Advertises a dead model, the way Google still lists gemini-2.5-flash."""
+
+    def __init__(self, config, advertised: List[str], working: set) -> None:
+        super().__init__(config)
+        self._advertised = list(advertised)
+        self._working = set(working)
+        self.calls = 0
+
+    def list_models(self) -> List[str]:
+        return list(self._advertised)
+
+    def chat(self, messages, system=None, temperature=0.4, max_tokens=900, timeout=None):  # noqa: D102
+        self.calls += 1
+        if self.model not in self._working:
+            raise ProviderBadResponse(self.slug, "model not found")
+        return f"answered with {self.model}"
+
+
+def test_a_stale_vendor_listing_does_not_kill_the_provider(settings):
+    """The first substitute can be dead too - so try more than one.
+
+    Google still advertises ``gemini-2.5-flash`` while the generateContent
+    endpoint rejects it, so stopping at the first replacement reported a
+    perfectly healthy Gemini as unavailable.
+    """
+    settings.ai.max_retries = 0
+    provider = StaleListingProvider(
+        ProviderConfig(
+            slug="gemini", label="Google Gemini", kind="gemini",
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+            model="gemini-2.0-flash", api_key="k",
+        ),
+        advertised=["gemini-2.5-flash", "gemini-3.5-flash", "gemini-flash-latest"],
+        working={"gemini-3.5-flash"},
+    )
+    manager = build(settings, provider)
+
+    answer = manager.chat([{"role": "user", "content": "hi"}])
+
+    assert answer == "answered with gemini-3.5-flash"
+    assert provider.calls == 3, "the retired id, then the stale one, then a live one"
+    assert manager._health["gemini"].cooldown_until == 0
+
+
+def test_it_gives_up_once_every_candidate_is_exhausted(settings):
+    settings.ai.max_retries = 0
+    provider = StaleListingProvider(
+        ProviderConfig(
+            slug="gemini", label="Google Gemini", kind="gemini",
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+            model="gemini-2.0-flash", api_key="k",
+        ),
+        advertised=["gemini-2.5-flash", "gemini-3.5-flash", "gemini-flash-latest"],
+        working=set(),
+    )
+    manager = build(settings, provider)
+
+    try:
+        manager.chat([{"role": "user", "content": "hi"}])
+    except Exception:  # noqa: BLE001
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("should fail once nothing it advertises answers")
+    assert provider.calls <= 4, "it must not keep trying forever"
+
+
 def test_the_substitute_keeps_the_family_when_it_can():
     assert pick_model(["deepseek-v4-pro", "deepseek-flash"], "deepseek-chat") == "deepseek-flash"
 
