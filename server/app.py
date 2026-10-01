@@ -192,6 +192,23 @@ def create_app(settings: Optional[Settings] = None, jarvis: Optional[Jarvis] = N
     # ---------------------------------------------------------------- #
     # pages + static
     # ---------------------------------------------------------------- #
+    @app.middleware("http")
+    async def no_stale_console(request: Any, call_next: Any) -> Any:
+        """Keep console assets revalidating, so a `git pull` is never ignored.
+
+        ``FileResponse`` and ``StaticFiles`` send no ``Cache-Control``, so
+        browsers fall back to heuristic freshness and keep serving an old
+        ``app.js``.  The console then paired a fresh ``index.html`` with a
+        stale script and threw "Cannot set properties of null", which the
+        banner reported as a dead backend.  Only the console is pinned;
+        generated images and cached voice audio may still be reused.
+        """
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
     @app.get("/", response_class=HTMLResponse)
     async def index() -> Any:
         page = WEB_DIR / "index.html"

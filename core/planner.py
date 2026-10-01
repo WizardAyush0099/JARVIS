@@ -347,6 +347,29 @@ class Planner:
                 notes=["no AI provider available; running my best guess"],
             )
 
+        # No AI provider is not the same as "cannot answer".  A reference work
+        # needs no key at all, so a factual question gets a real, cited answer
+        # instead of a pitch about buying a subscription.
+        try:
+            from tools import knowledge as knowledge_tool
+
+            keyless = (
+                knowledge_tool.answer_without_a_provider(request)
+                if knowledge_tool.enabled()
+                else None
+            )
+        except Exception as exc:  # noqa: BLE001 - never take the turn down
+            log.warning("keyless reference lookup failed: %s", exc)
+            keyless = None
+        if keyless:
+            return Plan(
+                intent="knowledge",
+                reply=keyless,
+                source="wikipedia",
+                confidence=0.6,
+                notes=["answered from Wikipedia; no AI provider available"],
+            )
+
         # Say the "add an API key" bit once per run, not on every single turn -
         # hearing it again and again is exactly what makes JARVIS feel broken.
         if not self._told_no_provider:

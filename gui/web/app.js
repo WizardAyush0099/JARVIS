@@ -21,6 +21,18 @@
   })();
 
   var $ = function (id) { return document.getElementById(id); };
+
+  /** Writes text only when the node really is on the page.
+   *
+   *  A missing element must never take the console down with it.  An old cached
+   *  app.js meeting a newer index.html used to abort the whole render, and the
+   *  banner then wrongly claimed the backend was unreachable.
+   */
+  function setText(id, value) {
+    var node = $(id);
+    if (node) node.textContent = value;
+    return node;
+  }
   /** @param {string} id @returns {HTMLButtonElement} */
   function button(id) { return /** @type {HTMLButtonElement} */ ($(id)); }
   /** @param {string} id @returns {HTMLTextAreaElement} */
@@ -933,7 +945,7 @@
       item.appendChild(document.createTextNode(String(pair[1])));
       list.appendChild(item);
     });
-    $("boot-note").textContent = "initialising " + (settings.assistant_name || identity.assistant);
+    setText("boot-note", "initialising " + (settings.assistant_name || identity.assistant));
   }
 
   function renderMemory(memory, facts) {
@@ -1098,24 +1110,22 @@
     var pillNote = $("state-note");
     if (pillNote) {
       pillNote.textContent = "voice " + (speech.engine || "none") + " · mic " + (mic.engine || "none");
-    }
-    var note = $("voice-note");
-    if (state.textOnly) {
-      note.textContent = voiceInputBlocked();
+    }    if (state.textOnly) {
+      setText("voice-note", voiceInputBlocked());
     } else if (!speech.synthesis_available && !speech.available) {
-      note.textContent = "No speech engine is installed on the machine running JARVIS, " +
-        "so replies are text only. Install the voice requirements, then reload.";
+      setText("voice-note", "No speech engine is installed on the machine running JARVIS, "
+        + "so replies are text only. Install the voice requirements, then reload.");
     } else if (!speech.available) {
-      note.textContent = "This machine has no speaker, so JARVIS's voice is played " +
-        "here in the browser.";
+      setText("voice-note", "This machine has no speaker, so JARVIS's voice is played "
+        + "here in the browser.");
     } else if (!mic.available) {
-      note.textContent = "The Pi has no microphone of its own, so the Microphone and Live " +
-        "Talk buttons use this device's microphone through /api/transcribe.";
+      setText("voice-note", "The Pi has no microphone of its own, so the Microphone and Live "
+        + "Talk buttons use this device's microphone through /api/transcribe.");
     } else if (!mic.enabled) {
-      note.textContent = "Microphone input is disabled in .env (STT_ENABLED=false). " +
-        "Live Talk still works from this device's microphone.";
+      setText("voice-note", "Microphone input is disabled in .env (STT_ENABLED=false). "
+        + "Live Talk still works from this device's microphone.");
     } else {
-      note.textContent = "Voice is synthesized by the backend. Choose where it is played.";
+      setText("voice-note", "Voice is synthesized by the backend. Choose where it is played.");
     }
     $("btn-out-browser").setAttribute("aria-pressed", state.voiceOut === "browser" ? "true" : "false");
     $("btn-out-device").setAttribute("aria-pressed", state.voiceOut === "device" ? "true" : "false");
@@ -1746,11 +1756,13 @@
   function showConfirmation(pending) {
     state.pending = pending;
     var box = $("confirmation");
+    if (!box) return;
     if (!pending) { box.classList.add("hidden"); return; }
-    $("confirm-text").textContent = pending.question || "Confirm this action?";
-    $("confirm-meta").textContent = "tool: " + (pending.tool || "?");
+    setText("confirm-text", pending.question || "Confirm this action?");
+    setText("confirm-meta", "tool: " + (pending.tool || "?"));
     box.classList.remove("hidden");
-    $("btn-confirm-yes").focus();
+    var yes = $("btn-confirm-yes");
+    if (yes) yes.focus();
   }
 
   /* ---------------------------------------------------------------- snapshot */
@@ -1762,12 +1774,12 @@
       identity.owner = who.owner || identity.owner;
       identity.creator = who.creator || identity.creator || identity.owner;
       document.title = who.assistant;
-      $("intro-name").textContent = who.assistant;
+      setText("intro-name", who.assistant);
       var credit = $("intro-credit");
       if (credit) {
         credit.textContent = creditText(identity.creator, identity.owner);
       }
-      $("brand-sub").textContent = "personal ai · " + identity.owner;
+      setText("brand-sub", "personal ai · " + identity.owner);
     }
     var status = payload.status || {};
     setState(status.state || "idle", status.state_note || status.state);
@@ -1849,18 +1861,43 @@
     }
   }
 
+  /** Report a front-end render failure instead of blaming the backend.
+   *
+   *  `refresh()` used to funnel *every* failure into the "cannot reach the
+   *  brain" banner, so a console-side bug read as a dead Pi and sent people
+   *  hunting for a backend that was answering perfectly well.
+   */
+  function setRenderError(err) {
+    var message = err && err.message ? err.message : String(err);
+    pushFeed("console render error · " + message, "warn");
+    setPill($("pill-state"), "console error", "warn");
+    addMessage("system", "JARVIS answered, but this console page hit a front-end error "
+      + "while drawing the answer (" + message + "). The Pi is fine. Reload with "
+      + "Ctrl+Shift+R to force the newest console files.");
+  }
+
   function refresh() {
     return api("/api/state").then(function (payload) {
-      setOnline(true);
-      applySnapshot(payload, true);
+      try {
+        setOnline(true);
+        applySnapshot(payload, true);
+      } catch (err) {
+        // The backend answered - so say that, instead of claiming it is offline.
+        setOnline(true);
+        setRenderError(err);
+        throw err;
+      }
       // The log block is the real backend ring buffer, not a client echo.
       api("/api/logs?limit=40")
         .then(function (logs) { renderLogs((logs || {}).logs); })
         .catch(function () {});
       return payload;
     }).catch(function (error) {
-      setOnline(false, "This page is served but it cannot reach the JARVIS brain (" + error.message +
-        "). Start it with `.venv/bin/python main.py`, then reload.");
+      // Only a failed request may claim the brain is unreachable.
+      if (!state.online) {
+        setOnline(false, "This page is served but it cannot reach the JARVIS brain (" +
+          error.message + "). Start it with `.venv/bin/python main.py`, then reload.");
+      }
       throw error;
     });
   }

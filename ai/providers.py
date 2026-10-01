@@ -18,13 +18,103 @@ Adding another vendor is one class + one entry in ``config.settings``.
 from __future__ import annotations
 
 import json as jsonlib
+import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ai.http import HttpError, request_json
 from config.settings import ProviderConfig
+from core.logging_setup import get_logger
+
+log = get_logger("providers")
 
 Message = Dict[str, str]
+
+#: Phrases vendors use when the model id is unknown or has been retired.  A
+#: retired id is the single most common reason a perfectly healthy provider
+#: looks "unavailable", so it is worth detecting precisely rather than lumping
+#: in with every other 4xx.
+MISSING_MODEL_HINTS = (
+    "model not found",
+    "model_not_found",
+    "does not exist",
+    "not exist",
+    "no such model",
+    "unknown model",
+    "invalid model",
+    "unsupported model",
+    "is not supported",
+    "no longer available",
+    "has been retired",
+    "is retired",
+    "not available for",
+)
+
+#: Model ids that are never a chat model - embeddings, audio, guard rails.
+NON_CHAT_MARKERS = (
+    "embed", "whisper", "guard", "safeguard", "tts", "clip", "lyria", "transcribe",
+    "audio", "realtime", "moderation", "rerank", "onnx", "vision-model",
+)
+
+#: Markers of a small, fast model - the sensible default on a Raspberry Pi.
+FAST_MODEL_MARKERS = ("flash", "lite", "mini", "small", "turbo", "instant")
+
+
+def _tokens(model: str) -> List[str]:
+    """Split a model id into comparable words ("gemini-3.5-flash" -> 3 words)."""
+    return [t for t in re.split(r"[^a-z0-9]+", (model or "").lower()) if t]
+
+
+def _matches_marker(model: str, markers: Sequence[str]) -> bool:
+    """True when any marker is a whole word of the id.
+
+    Deliberately *not* a substring test: "gemini" contains "mini", so a
+    substring check classified every Gemini model as a small one and then
+    picked the wrong replacement.
+    """
+    words = _tokens(model)
+    return any(
+        word == marker or word.startswith(marker)
+        for word in words
+        for marker in markers
+    )
+
+
+def is_fast_model(model: str) -> bool:
+    """Small and quick - the sensible default on a Raspberry Pi."""
+    return _matches_marker(model, FAST_MODEL_MARKERS)
+
+
+def is_non_chat_model(model: str) -> bool:
+    """Embeddings, audio and guard rails can never hold a conversation."""
+    return _matches_marker(model, NON_CHAT_MARKERS)
+
+
+def looks_like_missing_model(error: Any) -> bool:
+    """Did this provider reject us because the model id is gone?"""
+    message = str(getattr(error, "message", "") or error).lower()
+    if "model" not in message:
+        return False
+    return any(hint in message for hint in MISSING_MODEL_HINTS)
+
+
+def pick_model(available: Sequence[str], preferred: str) -> Optional[str]:
+    """Choose the best available substitute for a retired ``preferred`` id.
+
+    Keeps the vendor's intent when we can (same family), and otherwise prefers
+    a small, fast model - a Pi assistant wants the quick answer, not the
+    largest one the vendor sells.
+    """
+    ids = [m for m in available if m]
+    if not ids:
+        return None
+    if preferred and preferred in ids:
+        return preferred
+    stem = (preferred or "").split("/")[-1].split("-")[0].lower()
+    related = [m for m in ids if stem and stem in m.lower()]
+    pool = related or ids
+    fast = [m for m in pool if is_fast_model(m)]
+    return (fast or pool)[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -77,6 +167,10 @@ def classify_http_error(slug: str, exc: Exception) -> ProviderError:
             return ProviderRateLimited(slug, "rate limited or out of quota")
         if status == 404 and "model" in body:
             return ProviderBadResponse(slug, "model not found")
+        # Vendors signal a retired model id with all sorts of statuses (400,
+        # 404, 422...), so trust the wording rather than the status code.
+        if "model" in body and any(hint in body for hint in MISSING_MODEL_HINTS):
+            return ProviderBadResponse(slug, "model not found")
         if status is not None and 400 <= status < 500:
             return ProviderBadResponse(slug, f"request rejected ({status})")
         return ProviderUnavailable(slug, str(exc))
@@ -91,6 +185,8 @@ class AIProvider(ABC):
 
     def __init__(self, config: ProviderConfig) -> None:
         self.config = config
+        #: set when the vendor retired the configured model and we moved on
+        self._model: Optional[str] = None
 
     # -- identity ----------------------------------------------------------
     @property
@@ -103,7 +199,7 @@ class AIProvider(ABC):
 
     @property
     def model(self) -> str:
-        return self.config.model
+        return self._model or self.config.model
 
     @property
     def local(self) -> bool:
@@ -111,6 +207,36 @@ class AIProvider(ABC):
 
     def describe(self) -> str:
         return f"{self.label} ({self.model})" if self.model else self.label
+
+    # -- self-healing ------------------------------------------------------
+    def list_models(self) -> List[str]:
+        """Ids this vendor serves right now (empty when it will not say)."""
+        return []
+
+    def chat_models(self) -> List[str]:
+        """The subset of :meth:`list_models` that can actually hold a chat."""
+        return [m for m in self.list_models() if not is_non_chat_model(m)]
+
+    def adopt_available_model(self) -> bool:
+        """Switch to a model this vendor really serves.  True if one was found.
+
+        Called only after a missing-model rejection, so the extra request is
+        worth it: the alternative is losing the provider for the whole run.
+        """
+        try:
+            available = self.chat_models()
+        except Exception as exc:  # noqa: BLE001 - discovery is best effort
+            log.debug("%s: could not list models (%s)", self.slug, exc)
+            return False
+        chosen = pick_model(available, self.config.model)
+        if not chosen:
+            return False
+        log.warning(
+            "provider %s no longer serves %r; switching to %r",
+            self.slug, self.config.model, chosen,
+        )
+        self._model = chosen
+        return True
 
     # -- api ---------------------------------------------------------------
     @abstractmethod
@@ -146,6 +272,22 @@ class OpenAICompatProvider(AIProvider):
             headers["HTTP-Referer"] = "https://github.com/WizardAyush0099/JARVIS"
             headers["X-Title"] = "JARVIS"
         return headers
+
+    def list_models(self) -> List[str]:
+        """Ask this endpoint which model ids it currently serves."""
+        data = request_json(
+            f"{self.config.base_url}/models",
+            headers=self._headers(),
+            timeout=15.0,
+            retries=0,
+        )
+        if not isinstance(data, Mapping):
+            return []
+        return [
+            str(entry.get("id"))
+            for entry in (data.get("data") or [])
+            if isinstance(entry, Mapping) and entry.get("id")
+        ]
 
     def chat(
         self,
@@ -229,6 +371,27 @@ class OllamaProvider(OpenAICompatProvider):
 # --------------------------------------------------------------------------- #
 class GeminiProvider(AIProvider):
     kind = "gemini"
+
+    def list_models(self) -> List[str]:
+        """Gemini's own model list, restricted to ones that can generate text."""
+        headers = {"Content-Type": "application/json"}
+        url = f"{self.config.base_url}/models"
+        if self.config.api_key:
+            headers["x-goog-api-key"] = self.config.api_key
+        data = request_json(url, headers=headers, timeout=15.0, retries=0)
+        if not isinstance(data, Mapping):
+            return []
+        names: List[str] = []
+        for entry in data.get("models") or []:
+            if not isinstance(entry, Mapping):
+                continue
+            methods = entry.get("supportedGenerationMethods") or []
+            if "generateContent" not in methods:
+                continue
+            name = str(entry.get("name", ""))
+            if name:
+                names.append(name.split("/")[-1])
+        return names
 
     def chat(
         self,
@@ -370,5 +533,9 @@ __all__ = [
     "ProviderUnavailable",
     "build_provider",
     "classify_http_error",
+    "is_fast_model",
+    "is_non_chat_model",
+    "looks_like_missing_model",
     "messages_from_pairs",
+    "pick_model",
 ]

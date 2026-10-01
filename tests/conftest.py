@@ -51,6 +51,8 @@ def _no_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     # The keyless cloud fallback is on by default, but a test run must never
     # touch the network: tests that care about it switch it back on explicitly.
     monkeypatch.setenv("POLLINATIONS_ENABLED", "false")
+    # Same for the keyless reference lookup (Wikipedia).
+    monkeypatch.setenv("WIKIPEDIA_ENABLED", "false")
     monkeypatch.setenv("LMSTUDIO_ENABLED", "false")
     monkeypatch.setenv("EMAIL_ENABLED", "false")
     monkeypatch.setenv("TTS_ENABLED", "false")
