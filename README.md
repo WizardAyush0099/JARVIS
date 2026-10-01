@@ -896,6 +896,7 @@ Everything is optional and lives in `.env` (see [`env.example`](env.example)).
 | `OLLAMA_ENABLED`, `OLLAMA_MODEL` | `false` | fully local model, no key, no internet |
 | `LMSTUDIO_ENABLED`, `LMSTUDIO_MODEL` | `false` | local LM Studio server (no key) |
 | `POLLINATIONS_ENABLED` | `true` | keyless public fallback, used only after every provider above |
+| `WIKIPEDIA_ENABLED` | `true` | free, keyless reference lookups, so a factual question is still answered when every AI provider is down |
 | `AI_TEMPERATURE`, `AI_MAX_TOKENS`, `AI_REQUEST_TIMEOUT`, `AI_MAX_RETRIES` | `0.4`, `900`, `45`, `2` | model behaviour |
 | `JARVIS_HISTORY_TURNS` | `12` | conversation window sent to the model |
 | `SEARCH_PROVIDER` | `duckduckgo` | `duckduckgo` / `tavily` / `brave` / `searxng` |
@@ -950,6 +951,8 @@ first thing to run on the Pi.
 | `FastAPI is not installed` | If the message also names a second interpreter and `.venv`, JARVIS was started with the system Python - pick the venv with *Python: Select Interpreter* (`./.venv/bin/python`), or run `.venv/bin/python main.py`. Otherwise: `pip install -r requirements.txt`. |
 | `No supported WebSocket library detected` | Live console updates need a WebSocket implementation. `.venv/bin/pip install websockets` (or `uvicorn[standard]`), then restart. Until then the console still works - it just falls back to polling, so state and voice arrive a few seconds late. |
 | Assistant answers "I don't have an AI provider available" | No key is set and the keyless fallback is switched off. Add one key to `.env`, set `POLLINATIONS_ENABLED=true`, or start Ollama. `--check` names the exact variable each provider is missing. |
+| A provider shows "model not found", or every prompt answers as if no provider existed | The model id was retired upstream. JARVIS now notices this on its own: it asks the vendor which models it serves, switches over and retries, logging `switching to ...`. It works for any provider, so a stale default can never silently kill the chain. To pin a model yourself, set e.g. `GROQ_MODEL=...` in `.env`; `python main.py --check` prints the id actually in use. |
+| A factual question is answered from Wikipedia instead of the model | That is the point - `WIKIPEDIA_ENABLED` is on by default because Wikipedia needs no key, so JARVIS still answers facts when no provider is reachable. Set `WIKIPEDIA_ENABLED=false` to turn those lookups off. |
 | `I'm running offline right now` | Every provider failed or is cooling down. Check the internet, then press *reset provider cooldowns* in the status panel. |
 | Answers are slower or less private than expected | You are on the keyless fallback (`pollinations` lit in the *Ai core* panel). Add any provider key for a private, faster brain, or set `POLLINATIONS_ENABLED=false` to forbid the shared endpoint. |
 | Voice silent | Run `--check`. Install `pygame` (playback) and `edge-tts`, or `espeak-ng` for offline. |

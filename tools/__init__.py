@@ -11,6 +11,7 @@ from tools import coding  # noqa: F401
 from tools import email_tool  # noqa: F401
 from tools import files  # noqa: F401
 from tools import image  # noqa: F401
+from tools import knowledge  # noqa: F401
 from tools import media  # noqa: F401
 from tools import protocol  # noqa: F401
 from tools import spotify  # noqa: F401
@@ -44,6 +45,7 @@ MODULES = (
     email_tool,
     files,
     image,
+    knowledge,
     media,
     protocol,
     spotify,

@@ -35,6 +35,7 @@ from ai.providers import (
     ProviderUnavailable,
     build_provider,
     classify_http_error,
+    looks_like_missing_model,
 )
 from config.settings import Settings
 from core.logging_setup import get_logger
@@ -286,12 +287,16 @@ class ProviderManager:
             if budget < 0:
                 budget = 0 if provider.local else max(0, self.settings.ai.max_retries)
             attempts = 1 + budget
+            healed = False
             # A provider may cap its own patience: a keyless public endpoint must
             # never hold the whole chain hostage for the global 45s timeout.
             call_timeout = timeout
             if provider.config.timeout and provider.config.timeout > 0:
                 call_timeout = min(timeout, provider.config.timeout)
-            for attempt in range(attempts):
+            # A `while`, not a `for`: healing retries on the same attempt, and
+            # `continue` in a `for` would advance past the one attempt we have.
+            attempt = 0
+            while attempt < attempts:
                 started = time.time()
                 try:
                     text = provider.chat(
@@ -304,10 +309,27 @@ class ProviderManager:
                     if not text or not text.strip():
                         raise ProviderBadResponse(provider.slug, "empty answer")
                     self._mark_success(health, time.time() - started)
+                    health.model = provider.model
                     self.last_provider = provider.slug
                     return text.strip()
                 except Exception as raw_error:  # noqa: BLE001 - classified below
                     error = classify_http_error(provider.slug, raw_error)
+                    # A retired model id is not the provider's fault and must not
+                    # cost us the provider: ask it what it serves now, switch,
+                    # and retry on the spot without burning the retry budget.
+                    if not healed and looks_like_missing_model(error):
+                        if provider.adopt_available_model():
+                            healed = True
+                            health.model = provider.model
+                            if self.events is not None:
+                                self.events.publish(
+                                    "provider",
+                                    message=f"{provider.label} retired its old model - "
+                                            f"switched to {provider.model}",
+                                    provider=provider.slug,
+                                    model=provider.model,
+                                )
+                            continue
                     is_transient = isinstance(error, ProviderUnavailable)
                     if is_transient and attempt + 1 < attempts:
                         log.debug(
@@ -318,6 +340,7 @@ class ProviderManager:
                             attempts,
                         )
                         time.sleep(min(2.0, 0.4 * (2**attempt)))
+                        attempt += 1
                         continue
                     self._mark_failure(health, error, time.time() - started)
                     failures.append((provider.slug, error.message))
@@ -329,6 +352,7 @@ class ProviderManager:
                             error=error.message,
                         )
                     break
+                attempt += 1
 
         log.error("all providers failed: %s", failures)
         raise AllProvidersFailed(failures)
