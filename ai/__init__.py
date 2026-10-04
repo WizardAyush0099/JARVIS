@@ -9,6 +9,7 @@ from ai.providers import (  # noqa: F401
     ProviderBadResponse,
     ProviderError,
     ProviderRateLimited,
+    ProviderTimeout,
     ProviderUnavailable,
     build_provider,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "ProviderHealth",
     "ProviderManager",
     "ProviderRateLimited",
+    "ProviderTimeout",
     "ProviderUnavailable",
     "build_provider",
     "extract_json",

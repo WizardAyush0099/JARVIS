@@ -33,6 +33,7 @@ from ai.providers import (
     ProviderBadResponse,
     ProviderError,
     ProviderRateLimited,
+    ProviderTimeout,
     ProviderUnavailable,
     build_provider,
     classify_http_error,
@@ -337,7 +338,13 @@ class ProviderManager:
                         # Nothing left that this provider still serves: fall
                         # through and record the real failure, so the reason
                         # reaches the console instead of "no providers".
-                    is_transient = isinstance(error, ProviderUnavailable)
+                    # A timeout is technically transient, but retrying it just
+                    # multiplies the wait: the provider already burned its whole
+                    # budget without answering.  Only retry failures that came
+                    # back instantly (connection refused, 5xx, onward errors).
+                    is_transient = isinstance(error, ProviderUnavailable) and not isinstance(
+                        error, ProviderTimeout
+                    )
                     if is_transient and attempt + 1 < attempts:
                         log.debug(
                             "%s transient failure (%s); retrying (%d/%d)",
