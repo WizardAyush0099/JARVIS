@@ -87,7 +87,7 @@ def test_the_hud_page_and_its_hooks_are_served(settings, events):
             'id="btn-mic"', 'id="btn-live"', 'id="btn-mic-mute"', 'id="btn-voice-mute"',
             'id="btn-stop"', 'id="btn-clear"', 'id="level"', 'id="state-label"',
             'id="core-canvas"',   # the neural core canvas
-            'id="trace-list"',     # cognition trace
+            'id="boot-canvas"',   # the boot core canvas
             'id="chain"',          # fallback chain circuit
             'id="chain-ready"', 'id="chain-total"',
             'id="pill-brains"', 'id="boot-log"',

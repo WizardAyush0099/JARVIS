@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from core import intent as intent_layer
 from core import language as language_layer
+from core import persona
 from core.logging_setup import get_logger
 
 log = get_logger("planner")
@@ -73,6 +74,8 @@ Who you are:
 - Be calm, direct and genuinely sharp - a trusted chief of staff, not a chatbot. Lead with the answer, then the detail that matters. No filler, no hedging, no roleplay stage directions, no disclaimers about being an AI unless your limits genuinely matter to the answer.
 - Answer in the user's language. {language_rule}
 {visitor}
+
+{persona}
 
 {language}
 
@@ -174,6 +177,7 @@ class Planner:
                 "language they explicitly asked for."
             ),
             now=datetime.now().strftime("%A %d %B %Y, %H:%M"),
+            persona=persona.PERSONA,
             facts=self._facts_block(),
             tools=self.tool_catalogue(),
             max_steps=MAX_STEPS,

@@ -13,6 +13,8 @@ Design notes
 
 from __future__ import annotations
 
+import glob
+import locale
 import os
 import platform
 import shutil
@@ -246,6 +248,120 @@ def _network() -> Dict[str, Any]:
     return info
 
 
+#: IANA time zones the console is likely to see, mapped to a country.  A short
+#: table on purpose: a wrong guess is worse than "unknown".
+_ZONE_COUNTRIES = {
+    "Asia/Kolkata": "India",
+    "Asia/Calcutta": "India",
+    "Asia/Dubai": "United Arab Emirates",
+    "Asia/Karachi": "Pakistan",
+    "Asia/Dhaka": "Bangladesh",
+    "Asia/Kathmandu": "Nepal",
+    "Asia/Colombo": "Sri Lanka",
+    "Asia/Tokyo": "Japan",
+    "Asia/Shanghai": "China",
+    "Asia/Singapore": "Singapore",
+    "Europe/London": "United Kingdom",
+    "Europe/Berlin": "Germany",
+    "Europe/Paris": "France",
+    "Europe/Madrid": "Spain",
+    "Europe/Rome": "Italy",
+    "America/New_York": "United States",
+    "America/Chicago": "United States",
+    "America/Denver": "United States",
+    "America/Los_Angeles": "United States",
+    "America/Toronto": "Canada",
+    "Australia/Sydney": "Australia",
+    "Australia/Melbourne": "Australia",
+}
+
+#: Locale region codes, as a fallback when no usable time zone is set.
+_REGION_COUNTRIES = {
+    "IN": "India", "US": "United States", "GB": "United Kingdom", "DE": "Germany",
+    "FR": "France", "JP": "Japan", "CN": "China", "SG": "Singapore",
+    "AE": "United Arab Emirates", "PK": "Pakistan", "BD": "Bangladesh",
+    "NP": "Nepal", "LK": "Sri Lanka", "AU": "Australia", "CA": "Canada",
+    "ES": "Spain", "IT": "Italy", "BR": "Brazil", "RU": "Russia", "ZA": "South Africa",
+}
+
+
+def _country() -> Optional[str]:
+    """Best-effort country for the console, with no network call.
+
+    The time zone is the most reliable offline signal: ``/etc/timezone``, the
+    ``TZ`` variable, or the ``/etc/localtime`` symlink.  If none maps, the
+    locale's region code is the fallback.  ``None`` means "unknown", and the
+    console then shows a dash rather than a guess.
+    """
+    zones: List[str] = []
+    try:
+        with open("/etc/timezone", "r", encoding="utf-8") as handle:
+            zone = handle.read().strip()
+        if zone:
+            zones.append(zone)
+    except OSError:
+        pass
+    tz = (os.environ.get("TZ") or "").strip()
+    if tz:
+        zones.append(tz)
+    try:
+        target = os.path.realpath("/etc/localtime")
+        if "zoneinfo/" in target:
+            zones.append(target.split("zoneinfo/", 1)[1])
+    except Exception:
+        pass
+    for zone in zones:
+        if zone in _ZONE_COUNTRIES:
+            return _ZONE_COUNTRIES[zone]
+    try:
+        loc = locale.getlocale()[0] or ""
+    except Exception:
+        loc = ""
+    region = loc.split("_")[-1].split(".")[0].upper() if "_" in loc else ""
+    return _REGION_COUNTRIES.get(region)
+
+
+def _gpu() -> Optional[str]:
+    """Best-effort GPU, from the device tree, DRM or the NVIDIA driver.
+
+    Raspberry Pi and Jetson expose a model string in the device tree; a generic
+    Linux box at least names the DRM driver.  ``None`` when nothing is found.
+    """
+    model = None
+    try:
+        with open("/proc/device-tree/model", "rb") as handle:
+            model = handle.read().decode("utf-8", "replace").strip("\x00")
+    except OSError:
+        model = None
+    if model:
+        low = model.lower()
+        if "raspberry pi" in low:
+            # VideoCore VI on the Pi 4 / 400 / CM4, VideoCore VII on the Pi 5.
+            if "pi 5" in low:
+                return "Broadcom VideoCore VII"
+            return "Broadcom VideoCore VI"
+        if "jetson" in low:
+            return model
+    try:
+        for version in ("/proc/driver/nvidia/version",):
+            with open(version, "r", encoding="utf-8") as handle:
+                first = handle.readline().strip()
+            if first:
+                return "NVIDIA " + first[:48]
+    except OSError:
+        pass
+    try:
+        for card in sorted(glob.glob("/sys/class/drm/card[0-9]")):
+            uevent = os.path.join(card, "device", "uevent")
+            with open(uevent, "r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    if line.startswith("DRIVER="):
+                        return line.split("=", 1)[1].strip()
+    except Exception:
+        pass
+    return None
+
+
 def _uptime() -> Optional[str]:
     try:
         with open("/proc/uptime", "r", encoding="utf-8") as handle:
@@ -289,6 +405,8 @@ def machine_metrics() -> Dict[str, Any]:
         "host": uname.node,
         "platform": f"{platform.system()} {platform.release()}",
         "board": model,
+        "country": _country(),
+        "gpu": _gpu(),
         "is_pi": is_raspberry_pi(),
         "psutil": HAVE_PSUTIL,
     }

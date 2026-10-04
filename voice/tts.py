@@ -285,17 +285,26 @@ class EdgeTTSEngine(TTSEngine):
         voice = tts.voice_hi if language == "hi" else tts.voice_en
         voice = voice or ("hi-IN-MadhurNeural" if language == "hi" else "en-GB-RyanNeural")
         rate = int(getattr(tts, "rate", -8) or 0)
-        volume = int(float(getattr(tts, "volume", 0.9) or 0.9) * 100)
+        # Keep the ceiling safely below clipping.  Amplifying the stream to +100%
+        # is exactly what made the voice crackle on the Pi's small speaker.
+        wanted = float(getattr(tts, "volume", 0.9) or 0.9)
+        volume = int(min(0.95, max(0.0, wanted)) * 100)
         rate_arg = f"{rate:+d}%" if rate else "+0%"
-        volume_arg = f"{max(0, min(100, volume)):+d}%"
+        volume_arg = f"{volume:+d}%"
 
         target = cache_dir / f"{hashlib.sha1((voice + text).encode()).hexdigest()}.mp3"
         if target.exists() and target.stat().st_size > 0:
             return target  # already synthesized: no second network round trip
 
+        # Edge TTS *streams*, so a dropped connection used to leave a truncated
+        # MP3 at the cache path - and the check above then served that broken file
+        # (heard as crackle) forever.  Synthesize to a temp file and move it into
+        # place only when it is complete.
+        partial = target.with_name(target.name + ".part")
+
         async def run() -> None:
             communicate = edge_tts.Communicate(text, voice, rate=rate_arg, volume=volume_arg)
-            await communicate.save(str(target))
+            await communicate.save(str(partial))
 
         try:
             asyncio.run(run())
@@ -308,8 +317,18 @@ class EdgeTTSEngine(TTSEngine):
                 loop.close()
         except Exception as exc:  # noqa: BLE001
             log.warning("edge-tts failed: %s", exc)
+            partial.unlink(missing_ok=True)
             return None
-        return target if target.exists() and target.stat().st_size > 0 else None
+        if not (partial.exists() and partial.stat().st_size > 0):
+            partial.unlink(missing_ok=True)
+            return None
+        try:
+            os.replace(partial, target)
+        except OSError as exc:
+            log.warning("could not store synthesized audio: %s", exc)
+            partial.unlink(missing_ok=True)
+            return None
+        return target
 
 
 class PiperTTSEngine(TTSEngine):

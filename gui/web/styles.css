@@ -24,6 +24,14 @@
   --muted: #6d8ea3;
   --radius: 14px;
   --radius-sm: 9px;
+  /* plasma palette: the core is a molten gold sphere, like the reference */
+  --plasma: #ffb224;
+  --plasma-hot: #ffd874;
+  --plasma-deep: #b25f06;
+  --glass: rgba(9, 22, 36, 0.5);
+  --glass-strong: rgba(10, 24, 39, 0.66);
+  --glass-hi: rgba(56, 214, 255, 0.1);
+  --blur: saturate(1.25) blur(14px);
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --shadow: 0 18px 44px -28px #000;
   --glow: 0 0 18px rgba(56, 214, 255, 0.22);
@@ -103,11 +111,17 @@ body[data-boot="off"] .boot { display: none; }
   width: min(620px, 86vw);
   padding: 34px 30px 30px;
   text-align: center;
-  border: 1px solid rgba(56, 214, 255, 0.28);
-  background: linear-gradient(180deg, rgba(9, 26, 42, 0.72), rgba(3, 10, 18, 0.72));
+  border: 1px solid rgba(255, 190, 80, 0.28);
+  background: linear-gradient(180deg, rgba(14, 22, 40, 0.74), rgba(4, 8, 18, 0.74));
   clip-path: polygon(24px 0, calc(100% - 24px) 0, 100% 24px, 100% calc(100% - 24px),
     calc(100% - 24px) 100%, 24px 100%, 0 calc(100% - 24px), 0 24px);
-  box-shadow: 0 0 60px -18px rgba(56, 214, 255, 0.55) inset;
+  box-shadow: 0 0 60px -18px rgba(255, 178, 36, 0.6) inset;
+}
+.boot-canvas {
+  display: block;
+  width: clamp(132px, 38vw, 190px);
+  height: auto;
+  margin: 0 auto 4px;
 }
 .tick {
   position: absolute;
@@ -126,8 +140,8 @@ body[data-boot="off"] .boot { display: none; }
   font-size: clamp(15px, 3.4vw, 22px);
   letter-spacing: 0.3em;
   text-transform: uppercase;
-  color: var(--ice);
-  text-shadow: 0 0 18px rgba(56, 214, 255, 0.7);
+  color: #ffe9c2;
+  text-shadow: 0 0 18px rgba(255, 178, 36, 0.75);
 }
 .boot-dots { animation: boot-dots 1.1s steps(4, end) infinite; }
 @keyframes boot-dots { 0% { opacity: 0.25; } 50% { opacity: 1; } 100% { opacity: 0.25; } }
@@ -135,13 +149,13 @@ body[data-boot="off"] .boot { display: none; }
 .boot-bar i {
   width: clamp(20px, 6.4vw, 42px);
   height: clamp(14px, 3.6vw, 22px);
-  border: 1px solid rgba(56, 214, 255, 0.4);
-  background: rgba(56, 214, 255, 0.06);
+  border: 1px solid rgba(255, 190, 80, 0.4);
+  background: rgba(255, 178, 36, 0.06);
   transition: background 0.18s ease, box-shadow 0.18s ease;
 }
 .boot-bar i.on {
-  background: linear-gradient(180deg, #dffaff, var(--cyan));
-  box-shadow: 0 0 14px rgba(56, 214, 255, 0.75);
+  background: linear-gradient(180deg, #fff6df, var(--plasma));
+  box-shadow: 0 0 14px rgba(255, 178, 36, 0.8);
 }
 .boot-note {
   margin: 18px 0 0;
@@ -229,21 +243,21 @@ body[data-boot="off"] .boot { display: none; }
 .orb span { position: absolute; border-radius: 50%; }
 .orb-bloom {
   inset: 0;
-  background: radial-gradient(circle at 50% 50%, rgba(56, 214, 255, 0.32), transparent 62%);
+  background: radial-gradient(circle at 50% 50%, rgba(255, 178, 36, 0.34), transparent 64%);
 }
-.orb-ring { inset: 8px; border: 1px solid rgba(56, 214, 255, 0.45); border-top-color: var(--cyan); animation: spin 4.5s linear infinite; }
-.orb-ring-2 { inset: 3px; border: 1px dashed rgba(56, 214, 255, 0.3); animation: spin 11s linear infinite reverse; }
-.orb-ring-3 { inset: 13px; border: 1px solid rgba(169, 243, 255, 0.25); animation: spin 7s linear infinite; }
+.orb-ring { inset: 8px; border: 1px solid rgba(255, 190, 80, 0.45); border-top-color: var(--plasma-hot); animation: spin 4.5s linear infinite; }
+.orb-ring-2 { inset: 3px; border: 1px dashed rgba(255, 178, 36, 0.3); animation: spin 11s linear infinite reverse; }
+.orb-ring-3 { inset: 13px; border: 1px solid rgba(255, 224, 150, 0.25); animation: spin 7s linear infinite; }
 .orb-core {
   inset: 18px;
-  background: radial-gradient(circle at 40% 34%, #ffffff, var(--cyan) 70%);
-  box-shadow: 0 0 16px 4px rgba(56, 214, 255, 0.6);
+  background: radial-gradient(circle at 40% 34%, #fffdf4, #ffd874 42%, var(--plasma) 72%);
+  box-shadow: 0 0 16px 4px rgba(255, 178, 36, 0.6);
 }
-body[data-state="listening"] .orb-core { background: radial-gradient(circle at 40% 34%, #eafff7, var(--green) 70%); box-shadow: 0 0 18px 5px rgba(52, 226, 164, 0.6); }
+body[data-state="listening"] .orb-core { background: radial-gradient(circle at 40% 34%, #fff6df, #ffc46a 42%, #ff9d2e 72%); box-shadow: 0 0 20px 6px rgba(255, 178, 36, 0.7); }
 body[data-state="thinking"] .orb-core,
-body[data-state="working"] .orb-core { background: radial-gradient(circle at 40% 34%, #fff4dd, var(--amber) 70%); box-shadow: 0 0 18px 5px rgba(245, 182, 66, 0.6); }
-body[data-state="speaking"] .orb-core { background: radial-gradient(circle at 40% 34%, #efeaff, var(--violet) 70%); box-shadow: 0 0 18px 5px rgba(157, 140, 255, 0.6); }
-body[data-state="error"] .orb-core { background: radial-gradient(circle at 40% 34%, #ffe3e3, var(--red) 70%); box-shadow: 0 0 18px 5px rgba(255, 93, 93, 0.6); }
+body[data-state="working"] .orb-core { background: radial-gradient(circle at 40% 34%, #ffffff, #ffdf9a 40%, var(--plasma) 70%); box-shadow: 0 0 22px 7px rgba(255, 190, 60, 0.75); }
+body[data-state="speaking"] .orb-core { background: radial-gradient(circle at 40% 34%, #fffaf0, #ffd06a 42%, #ff9a1f 72%); box-shadow: 0 0 18px 5px rgba(255, 170, 40, 0.65); }
+body[data-state="error"] .orb-core { background: radial-gradient(circle at 40% 34%, #ffe9e9, #ff8a8a 42%, var(--red) 72%); box-shadow: 0 0 18px 5px rgba(255, 93, 93, 0.6); }
 
 .mission { display: flex; flex-direction: column; gap: 1px; min-width: 132px; }
 .mission-value {
@@ -360,29 +374,28 @@ body[data-state="error"] .orb-core { background: radial-gradient(circle at 40% 3
 .reactor { position: relative; width: clamp(128px, 26vw, 176px); aspect-ratio: 1; flex: none; }
 .reactor span { position: absolute; border-radius: 50%; }
 .reactor-glow {
-  inset: -14%;
-  background: radial-gradient(circle, rgba(56, 214, 255, 0.28), rgba(56, 214, 255, 0.06) 48%, transparent 70%);
+  inset: -16%;
+  background: radial-gradient(circle, rgba(255, 178, 36, 0.34), rgba(255, 150, 30, 0.08) 48%, transparent 72%);
   animation: breathe 4.2s ease-in-out infinite;
 }
-.reactor-ring { border: 1.5px solid rgba(56, 214, 255, 0.4); }
-.reactor-ring-1 { inset: 4%; border-top-color: var(--cyan); border-right-color: rgba(56, 214, 255, 0.7); animation: spin 9s linear infinite; }
-.reactor-ring-2 { inset: 15%; border-style: dashed; border-color: rgba(56, 214, 255, 0.35); animation: spin 16s linear infinite reverse; }
-.reactor-ring-3 { inset: 26%; border-color: rgba(169, 243, 255, 0.3); border-bottom-color: var(--ice); animation: spin 6s linear infinite; }
+.reactor-ring { border: 1.5px solid rgba(255, 196, 88, 0.4); }
+.reactor-ring-1 { inset: 4%; border-top-color: var(--plasma-hot); border-right-color: rgba(255, 178, 36, 0.75); animation: spin 9s linear infinite; }
+.reactor-ring-2 { inset: 15%; border-style: dashed; border-color: rgba(255, 178, 36, 0.35); animation: spin 16s linear infinite reverse; }
 .reactor-ticks {
   inset: -3%;
   border: none;
   background:
     conic-gradient(from 0deg,
-      rgba(56, 214, 255, 0.85) 0 0.6deg, transparent 0.6deg 6deg,
-      rgba(56, 214, 255, 0.85) 6deg 6.6deg, transparent 6.6deg 12deg,
-      rgba(56, 214, 255, 0.85) 12deg 12.6deg, transparent 12.6deg 18deg,
-      rgba(56, 214, 255, 0.85) 18deg 18.6deg, transparent 18.6deg 24deg,
-      rgba(56, 214, 255, 0.85) 24deg 24.6deg, transparent 24.6deg 30deg,
-      rgba(56, 214, 255, 0.85) 30deg 30.6deg, transparent 30.6deg 36deg,
-      rgba(56, 214, 255, 0.85) 36deg 36.6deg, transparent 36.6deg 42deg,
-      rgba(56, 214, 255, 0.85) 42deg 42.6deg, transparent 42.6deg 48deg,
-      rgba(56, 214, 255, 0.85) 48deg 48.6deg, transparent 48.6deg 54deg,
-      rgba(56, 214, 255, 0.85) 54deg 54.6deg, transparent 54.6deg 60deg);
+      rgba(255, 190, 80, 0.85) 0 0.6deg, transparent 0.6deg 6deg,
+      rgba(255, 190, 80, 0.85) 6deg 6.6deg, transparent 6.6deg 12deg,
+      rgba(255, 190, 80, 0.85) 12deg 12.6deg, transparent 12.6deg 18deg,
+      rgba(255, 190, 80, 0.85) 18deg 18.6deg, transparent 18.6deg 24deg,
+      rgba(255, 190, 80, 0.85) 24deg 24.6deg, transparent 24.6deg 30deg,
+      rgba(255, 190, 80, 0.85) 30deg 30.6deg, transparent 30.6deg 36deg,
+      rgba(255, 190, 80, 0.85) 36deg 36.6deg, transparent 36.6deg 42deg,
+      rgba(255, 190, 80, 0.85) 42deg 42.6deg, transparent 42.6deg 48deg,
+      rgba(255, 190, 80, 0.85) 48deg 48.6deg, transparent 48.6deg 54deg,
+      rgba(255, 190, 80, 0.85) 54deg 54.6deg, transparent 54.6deg 60deg);
   -webkit-mask: radial-gradient(closest-side, transparent 88%, #000 89%, #000 100%);
   mask: radial-gradient(closest-side, transparent 88%, #000 89%, #000 100%);
   animation: spin 40s linear infinite;
@@ -401,7 +414,7 @@ body[data-state="error"] .orb-core { background: radial-gradient(circle at 40% 3
   inset: 2%;
   border-radius: 50%;
   background: conic-gradient(from 0deg,
-    rgba(56, 214, 255, 0.34) 0deg, rgba(56, 214, 255, 0.06) 26deg, transparent 62deg);
+    rgba(255, 190, 80, 0.34) 0deg, rgba(255, 178, 36, 0.06) 26deg, transparent 62deg);
   -webkit-mask: radial-gradient(closest-side, transparent 30%, #000 42%, #000 92%, transparent 100%);
   mask: radial-gradient(closest-side, transparent 30%, #000 42%, #000 92%, transparent 100%);
   animation: spin 4.6s linear infinite;
@@ -412,18 +425,6 @@ body[data-state="thinking"] .reactor-sweep,
 body[data-state="working"] .reactor-sweep { opacity: 1; animation-duration: 1.9s; }
 body[data-state="listening"] .reactor-sweep { animation-duration: 3.2s; }
 body[data-state="speaking"] .reactor-sweep { animation-duration: 2.4s; }
-.reactor-core {
-  inset: 34%;
-  background: radial-gradient(circle at 42% 36%, #ffffff, #9df3ff 42%, var(--cyan) 72%);
-  box-shadow: 0 0 28px 8px rgba(56, 214, 255, 0.55), inset 0 0 12px rgba(255, 255, 255, 0.7);
-  animation: breathe 3.4s ease-in-out infinite;
-}
-body[data-state="listening"] .reactor-core { background: radial-gradient(circle at 42% 36%, #ffffff, #b6ffe6 42%, var(--green) 72%); box-shadow: 0 0 30px 9px rgba(52, 226, 164, 0.5); }
-body[data-state="thinking"] .reactor-core,
-body[data-state="working"] .reactor-core { background: radial-gradient(circle at 42% 36%, #ffffff, #ffe6b8 42%, var(--amber) 72%); box-shadow: 0 0 30px 9px rgba(245, 182, 66, 0.5); }
-body[data-state="speaking"] .reactor-core { background: radial-gradient(circle at 42% 36%, #ffffff, #efeaff 42%, var(--violet) 72%); box-shadow: 0 0 30px 9px rgba(157, 140, 255, 0.5); }
-body[data-state="error"] .reactor-core { background: radial-gradient(circle at 42% 36%, #ffffff, #ffe3e3 42%, var(--red) 72%); box-shadow: 0 0 30px 9px rgba(255, 93, 93, 0.5); }
-
 .core-meta { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .core-word {
   font-family: var(--mono);
@@ -692,15 +693,15 @@ body[data-state="idle"] .level { opacity: 0.45; }
   inset: 30px;
   display: grid;
   place-items: center;
-  background: radial-gradient(circle at 35% 30%, #f2fdff, var(--cyan));
-  color: #04131b;
+  background: radial-gradient(circle at 35% 30%, #fffdf4, #ffd874 45%, var(--plasma) 80%);
+  color: #3a1d00;
   font-family: var(--mono);
   font-weight: 700;
   font-size: 16px;
-  box-shadow: 0 0 22px 6px rgba(56, 214, 255, 0.45);
+  box-shadow: 0 0 22px 6px rgba(255, 178, 36, 0.45);
 }
-.hero-ring { inset: 12px; border: 1.5px solid rgba(56, 214, 255, 0.5); border-top-color: var(--cyan); animation: spin 4.5s linear infinite; }
-.hero-ring-2 { inset: 2px; border: 1px dashed rgba(56, 214, 255, 0.3); animation: spin 12s linear infinite reverse; }
+.hero-ring { inset: 12px; border: 1.5px solid rgba(255, 190, 80, 0.5); border-top-color: var(--plasma-hot); animation: spin 4.5s linear infinite; }
+.hero-ring-2 { inset: 2px; border: 1px dashed rgba(255, 178, 36, 0.3); animation: spin 12s linear infinite reverse; }
 
 .suggestions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .chip {
@@ -1229,6 +1230,124 @@ body[data-media="playing"] .np-title { color: #d8ffe9; }
   color: #eafcff;
   border-color: rgba(56, 214, 255, 0.5);
   background: linear-gradient(180deg, rgba(56, 214, 255, 0.24), rgba(56, 214, 255, 0.1));
+}
+
+/* ================================================================== glass skin */
+/* Frosted panels and buttons: a real blur behind the surface, so the gold core
+   glows through the UI instead of sitting behind flat blocks.  Blur is the one
+   pricey effect here, so it is applied to a handful of surfaces only. */
+.composer,
+.console-bar,
+.panel,
+.rail,
+.chip,
+.btn,
+.ctl,
+.icon-btn,
+.seg,
+.pill,
+.boot-frame,
+.topbar {
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+}
+.composer,
+.console-bar,
+.panel,
+.topbar {
+  background: var(--glass-strong);
+}
+.rail,
+.chip,
+.btn,
+.ctl,
+.icon-btn,
+.pill,
+.seg {
+  background: var(--glass);
+}
+
+/* a soft sheen on the two most-tapped controls, so they read as glass */
+.composer-btn,
+.ctl {
+  position: relative;
+  overflow: hidden;
+}
+.composer-btn::after,
+.ctl::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 50%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent);
+  pointer-events: none;
+}
+/* Send is the one gold control: it is the action the whole page points at */
+.composer-btn.send {
+  background: linear-gradient(180deg, rgba(255, 190, 80, 0.34), rgba(255, 178, 36, 0.12));
+  border-color: rgba(255, 190, 80, 0.55);
+  color: #fff6e4;
+  box-shadow: 0 0 16px -2px rgba(255, 178, 36, 0.5);
+}
+.composer-btn.send:hover { border-color: var(--plasma-hot); color: #fffdf4; }
+.composer-btn.send:not(:disabled):active { transform: scale(0.94); }
+.ctl:hover,
+.icon-btn:hover,
+.chip:hover { border-color: rgba(255, 190, 80, 0.5); }
+
+/* ================================================================== ambient core */
+/* A blurred, dimmed copy of the molten core, breathing behind the whole console.
+   Only transforms and opacity animate, so the Pi stays cool.  Sits at z-index 0,
+   behind every panel and block. */
+.jarvis-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.jarvis-bg .jb-bloom {
+  position: absolute;
+  top: -20vh;
+  left: 50%;
+  width: min(1100px, 130vw);
+  height: min(1100px, 130vw);
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: radial-gradient(circle at 50% 42%,
+    rgba(255, 190, 80, 0.2), rgba(255, 150, 30, 0.08) 42%, transparent 66%);
+  filter: blur(30px);
+  animation: plasma-drift 16s ease-in-out infinite;
+}
+.jarvis-bg .jb-arc {
+  position: absolute;
+  top: -6vh;
+  left: 50%;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 190, 80, 0.12);
+  transform: translateX(-50%);
+}
+.jarvis-bg .jb-arc-1 { width: min(880px, 112vw); height: min(880px, 112vw); animation: spin-centered 70s linear infinite; }
+.jarvis-bg .jb-arc-2 { top: 6vh; width: min(620px, 86vw); height: min(620px, 86vw); border-style: dashed; animation: spin-centered 110s linear infinite reverse; }
+@keyframes spin-centered {
+  from { transform: translateX(-50%) rotate(0deg); }
+  to { transform: translateX(-50%) rotate(360deg); }
+}
+.jarvis-bg .jb-scan {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent, rgba(255, 190, 80, 0.05), transparent);
+  background-size: 100% 320px;
+  background-repeat: no-repeat;
+  animation: bg-scan 9s linear infinite;
+}
+@keyframes plasma-drift {
+  0%, 100% { transform: translate(-50%, 0) scale(1); opacity: 0.8; }
+  50% { transform: translate(-50%, 2.4vh) scale(1.05); opacity: 1; }
+}
+@keyframes bg-scan {
+  from { background-position: 0 -320px; }
+  to { background-position: 0 100vh; }
 }
 
 /* ------------------------------------------------------------------ motion */

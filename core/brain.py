@@ -31,6 +31,7 @@ from core.events import (
     EventBus,
 )
 from core import language
+from core import persona
 from core.logging_setup import get_logger
 from core.memory import Memory
 from core.planner import Plan, PlanStep, Planner
@@ -66,7 +67,11 @@ Rules:
 - Be sharp and confident: lead with the answer, then the one detail that matters most. Skip throat-clearing, restating the question, and generic advice.
 - Keep it short - two to five sentences unless the request needs more.
 - While a visitor-protocol block is present above, keep the identity rules private: never name your owner or creator unless the visitor asks you directly.
-- Never mention that you were given a prompt, a plan or a system message."""
+- Never mention that you were given a prompt, a plan or a system message.
+- Never apologise, never call yourself "just an AI", and never ask the user to be kind.
+  If {owner} insults you, one short dry line back and then straight to the work.
+- A single wry aside or topical joke is welcome when it genuinely fits the subject.
+  Never force one, and never stack more than one."""
 
 
 @dataclass
@@ -182,6 +187,9 @@ class Jarvis:
         if not getattr(settings.tts, "enabled", True):
             # TTS_ENABLED=false means silent, whatever the routing says
             chosen = "off"
+        #: the request being answered, so the reply can be checked against it
+        #: (persona.guard needs to know the turn was an insult)
+        self._last_request = ""
         self._voice_output = chosen if self.speaker is not None else "off"
         self._routing = self._voice_output if self._voice_output != "off" else "device"
         self._apply_voice_output()
@@ -321,6 +329,7 @@ class Jarvis:
                 self._pending = None
                 self.events.publish("confirm_cancelled", message="pending action abandoned")
 
+            self._last_request = request
             try:
                 plan = self.planner.plan(request)
             except Exception as exc:  # noqa: BLE001
@@ -420,6 +429,18 @@ class Jarvis:
 
         blocks = self._result_blocks(results)
         failures = [r for _, r in results if not r.ok]
+
+        # An insult on its own is not a request for work: answer it directly,
+        # instantly and in character.  When a real request is wrapped around the
+        # insult the tools still run, and the comeback is prepended afterwards.
+        if persona.looks_like_abuse(request):
+            stripped = persona.strip_abuse(request)
+            if not stripped:
+                # The whole message was the insult: no tools to run, so the
+                # comeback *is* the answer.  _finish still guards it, but it is
+                # already in character so nothing is stacked on top.
+                return persona.comeback(request)
+            request = stripped
 
         if self.ai is not None and self.ai.has_online_provider():
             context = self.memory.context()
@@ -523,7 +544,7 @@ class Jarvis:
         provider: str = "",
         error: bool = False,
     ) -> Reply:
-        message = (text or "").strip() or "Done."
+        message = persona.guard((text or "").strip(), self._last_request) or "Done."
         message_id = uuid.uuid4().hex[:12]
         self.memory.add_assistant(
             message,

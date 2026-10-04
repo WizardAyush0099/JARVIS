@@ -141,39 +141,30 @@
   var core = (function () {
     var canvas = /** @type {HTMLCanvasElement|null} */ ($("core-canvas"));
     var ctx = canvas ? canvas.getContext("2d") : null;
-    var nodes = [];
     var mode = "idle";
     var level = 0;
-    var wave = 0;
+    var t = 0;
     var raf = null;
     var last = 0;
     var dpr = 1;
     var reduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-    // each state gets its own colour family, so the core reads at a glance
-    var TINTS = {
-      idle: [188, 205],
-      listening: [148, 168],
-      thinking: [34, 48],
-      working: [34, 48],
-      speaking: [252, 272],
-      error: [352, 368],  // wraps past 360, staying in the reds
-
+    // The core is one object with one mood, so state drives colour and energy
+    // together instead of swapping palettes: `hot` sets the plasma colour,
+    // `energy` sets the filament count and surface churn, `boost` the swell.
+    var MOOD = {
+      idle:      { energy: 0.30, boost: 0.00, hot: 0.55 },
+      listening: { energy: 0.85, boost: 0.55, hot: 0.75 },
+      thinking:  { energy: 1.00, boost: 0.35, hot: 1.00 },
+      working:   { energy: 1.00, boost: 0.35, hot: 0.95 },
+      speaking:  { energy: 0.70, boost: 0.50, hot: 0.80 },
+      error:     { energy: 0.80, boost: 0.20, hot: 0.50, red: true },
     };
 
-    function grow() {
-      var width = window.innerWidth;
-      var count = width < 620 ? 22 : width < 1100 ? 32 : 46;
-      nodes = [];
-      for (var i = 0; i < count; i++) {
-        nodes.push({
-          angle: Math.random() * Math.PI * 2,
-          orbit: 0.26 + Math.random() * 0.44,
-          speed: 0.0011 + Math.random() * 0.0026,
-          size: 0.9 + Math.random() * 1.7,
-          drift: Math.random() * Math.PI * 2,
-          fire: 0,
-        });
-      }
+    // A stable, cheap pseudo-random: the same frame gives the same value, so the
+    // filaments flicker in place instead of teleporting between frames.
+    function noise(seed) {
+      var x = Math.sin(seed * 12.9898 + Math.floor(t * 2.6) * 78.233) * 43758.5453;
+      return x - Math.floor(x);
     }
 
     function resize() {
@@ -187,76 +178,113 @@
       last = 0;
     }
 
-    function tint() {
-      var pair = TINTS[mode] || TINTS.idle;
-      return pair[0] + Math.random() * (pair[1] - pair[0]);
-    }
-
+    // The core is a molten gold plasma sphere with electric filaments, matching
+    // the reference: a white-hot heart, an amber shell, gold lightning arcing
+    // across it, floating on a dark navy wash.
     function render(dt) {
       if (!ctx || !canvas) return;
       var side = canvas.clientWidth || 180;
-      var middle = side / 2;
-      var radius = middle * 0.94;
+      var mid = side / 2;
+      var mood = MOOD[mode] || MOOD.idle;
+      var red = !!mood.red;
+      t += dt * (0.4 + mood.energy * 1.1);
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalCompositeOperation = "source-over";
       ctx.clearRect(0, 0, side, side);
 
-      var busy = mode === "thinking" || mode === "working";
-      var lively = mode === "listening";
-      var speed = busy ? 3.1 : mode === "speaking" ? 1.9 : lively ? 1.35 : 0.7;
-      var push = lively ? Math.min(1, level * 2.4) : 0;
-      var wobble = busy ? radius * 0.035 : 0;
+      var breathe = 1 + Math.sin(t * 0.9) * 0.02 + mood.boost * 0.015;
+      var R = mid * 0.8 * breathe;
 
-      // sonar rings: one per ~450ms of speech, honest to the audio that plays
-      if (mode === "speaking") {
-        wave = (wave + dt * 0.021) % 1;
-        for (var w = 0; w < 3; w++) {
-          var reach = ((wave + w / 3) % 1);
-          ctx.beginPath();
-          ctx.strokeStyle = "hsla(" + tint() + ", 92%, 74%, " + (0.34 * (1 - reach)).toFixed(3) + ")";
-          ctx.lineWidth = 1.2;
-          ctx.arc(middle, middle, radius * (0.3 + reach * 0.68), 0, Math.PI * 2);
-          ctx.stroke();
-        }
+      // 1. dark navy wash, so the gold reads as a sphere floating in space
+      var wash = ctx.createRadialGradient(mid, mid, R * 0.1, mid, mid, R * 1.5);
+      wash.addColorStop(0, "rgba(14, 30, 62, 0.55)");
+      wash.addColorStop(0.55, "rgba(8, 18, 40, 0.28)");
+      wash.addColorStop(1, "rgba(3, 7, 18, 0)");
+      ctx.fillStyle = wash;
+      ctx.beginPath(); ctx.arc(mid, mid, R * 1.5, 0, Math.PI * 2); ctx.fill();
+
+      // 2. the molten body: white-hot heart, amber shell, fading to nothing
+      var body = ctx.createRadialGradient(mid - R * 0.16, mid - R * 0.2, R * 0.04, mid, mid, R);
+      if (red) {
+        body.addColorStop(0, "rgba(255, 244, 226, 0.99)");
+        body.addColorStop(0.24, "rgba(255, 168, 92, 0.96)");
+        body.addColorStop(0.58, "rgba(210, 60, 40, 0.88)");
+        body.addColorStop(0.86, "rgba(120, 20, 16, 0.35)");
+      } else {
+        body.addColorStop(0, "rgba(255, 252, 236, 0.99)");
+        body.addColorStop(0.2, "rgba(255, 224, 150, 0.97)");
+        body.addColorStop(0.46, "rgba(255, 172, 52, 0.92)");
+        body.addColorStop(0.72, "rgba(197, 108, 14, 0.68)");
+        body.addColorStop(0.92, "rgba(120, 58, 6, 0.28)");
+      }
+      body.addColorStop(1, "rgba(40, 20, 0, 0)");
+      ctx.fillStyle = body;
+      ctx.beginPath(); ctx.arc(mid, mid, R, 0, Math.PI * 2); ctx.fill();
+
+      // 3. molten churn: additive blobs drifting across the surface
+      ctx.globalCompositeOperation = "lighter";
+      for (var s = 0; s < 6; s++) {
+        var a = t * (0.22 + s * 0.07) + s * 1.7;
+        var dist = R * (0.2 + (s % 3) * 0.2);
+        var cx = mid + Math.cos(a) * dist;
+        var cy = mid + Math.sin(a * 1.3) * dist;
+        var blobR = R * (0.26 + 0.12 * Math.sin(t * 0.7 + s));
+        var blob = ctx.createRadialGradient(cx, cy, 0, cx, cy, blobR);
+        blob.addColorStop(0, red ? "rgba(255, 96, 60, 0.42)" : "rgba(255, 208, 96, 0.42)");
+        blob.addColorStop(1, "rgba(255, 150, 0, 0)");
+        ctx.fillStyle = blob;
+        ctx.beginPath(); ctx.arc(cx, cy, blobR, 0, Math.PI * 2); ctx.fill();
       }
 
-      var points = [];
-      for (var i = 0; i < nodes.length; i++) {
-        var node = nodes[i];
-        node.angle += node.speed * speed * dt;
-        node.fire = Math.max(0, node.fire - dt * 0.045);
-        // a fresh spark every so often keeps it alive without being noisy
-        if (Math.random() < (busy ? 0.05 : 0.012)) node.fire = 1;
-        var orbit = node.orbit + push * 0.09 + Math.sin(node.drift + node.angle * 3) * 0.012;
-        var x = middle + Math.cos(node.angle) * radius * orbit;
-        var y = middle + Math.sin(node.angle) * radius * orbit * 0.98;
-        if (wobble) {
-          x += (Math.random() - 0.5) * wobble;
-          y += (Math.random() - 0.5) * wobble;
-        }
-        points.push([x, y]);
-        var alpha = 0.28 + node.fire * 0.62 + push * 0.25;
+      // 4. electric filaments: jagged gold lightning across the plasma.  A wide
+      //    soft pass then a thin hot core gives a glow without shadowBlur.
+      var bolts = 5 + Math.round(mood.energy * 6);
+      ctx.lineCap = "round";
+      for (var b = 0; b < bolts; b++) {
+        var s1 = b * 7.13 + 1.0;
+        var a0 = noise(s1) * Math.PI * 2;
+        var a1 = a0 + 2.0 + noise(s1 + 1) * 2.8;
+        var r0 = R * (0.5 + noise(s1 + 2) * 0.46);
+        var r1 = R * (0.5 + noise(s1 + 3) * 0.46);
+        var x0 = mid + Math.cos(a0) * r0;
+        var y0 = mid + Math.sin(a0) * r0;
+        var x1 = mid + Math.cos(a1) * r1;
+        var y1 = mid + Math.sin(a1) * r1;
+        var cxp = mid + (noise(s1 + 4) - 0.5) * R * 0.8;
+        var cyp = mid + (noise(s1 + 5) - 0.5) * R * 0.8;
+        var alpha = (0.3 + noise(s1 + 6) * 0.55) * (0.55 + mood.energy * 0.4) * (0.7 + mood.hot * 0.5);
+        ctx.strokeStyle = red
+          ? "rgba(255, 140, 90, " + (alpha * 0.24).toFixed(3) + ")"
+          : "rgba(255, 226, 150, " + (alpha * 0.24).toFixed(3) + ")";
+        ctx.lineWidth = 3.6;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo(cxp, cyp, x1, y1); ctx.stroke();
+        ctx.strokeStyle = red
+          ? "rgba(255, 232, 214, " + alpha.toFixed(3) + ")"
+          : "rgba(255, 251, 238, " + alpha.toFixed(3) + ")";
+        ctx.lineWidth = 1.1;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo(cxp, cyp, x1, y1); ctx.stroke();
+      }
+
+      // 5. a hot rim, so the sphere has a clean edge against the dark
+      var rim = ctx.createRadialGradient(mid, mid, R * 0.84, mid, mid, R * 1.08);
+      rim.addColorStop(0, "rgba(255, 170, 40, 0)");
+      rim.addColorStop(0.62, red ? "rgba(255, 120, 80, 0.3)" : "rgba(255, 196, 88, 0.3)");
+      rim.addColorStop(1, "rgba(255, 150, 30, 0)");
+      ctx.fillStyle = rim;
+      ctx.beginPath(); ctx.arc(mid, mid, R * 1.08, 0, Math.PI * 2); ctx.fill();
+
+      // 6. sonar rings while listening or speaking, honest to the audio level
+      if (mode === "listening" || mode === "speaking") {
+        var reach = (t * 0.5) % 1;
+        ctx.strokeStyle = "rgba(255, 214, 128, " + (0.32 * (1 - reach)).toFixed(3) + ")";
+        ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.fillStyle = "hsla(" + (tint() - node.fire * 6) + ", 95%, " + (58 + node.fire * 30) + "%, " + Math.min(1, alpha).toFixed(3) + ")";
-        ctx.arc(x, y, node.size + node.fire * 1.1, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.arc(mid, mid, R * (0.92 + reach * 0.32 + level * 0.18), 0, Math.PI * 2);
+        ctx.stroke();
       }
 
-      // while thinking, nearby sparks link up: the network literally forming
-      if (busy) {
-        ctx.lineWidth = 0.7;
-        for (var a = 0; a < points.length; a++) {
-          for (var b = a + 1; b < points.length; b++) {
-            var dx = points[a][0] - points[b][0];
-            var dy = points[a][1] - points[b][1];
-            var gap = dx * dx + dy * dy;
-            if (gap > 2100) continue;
-            ctx.strokeStyle = "hsla(42, 96%, 72%, " + (0.26 * (1 - gap / 2100)).toFixed(3) + ")";
-            ctx.beginPath();
-            ctx.moveTo(points[a][0], points[a][1]);
-            ctx.lineTo(points[b][0], points[b][1]);
-            ctx.stroke();
-          }
-        }
-      }
+      ctx.globalCompositeOperation = "source-over";
     }
 
     function tick(ts) {
@@ -280,10 +308,9 @@
     }
 
     resize();
-    grow();
     render(1);
     schedule();
-    window.addEventListener("resize", function () { resize(); grow(); render(1); });
+    window.addEventListener("resize", function () { resize(); render(1); });
     document.addEventListener("visibilitychange", function () {
       last = 0;
       if (!document.hidden) schedule();
@@ -295,32 +322,69 @@
     };
   })();
 
-  /* ---------------------------------------------------------------- trace */
-  // The pipeline narrating itself, in order, with real timings.  Only ever fed
-  // by what the backend actually reported - never by a guess.
-  var TRACE_MAX = 4;
-
-  function pushTrace(text, tone) {
-    var list = $("trace-list");
-    if (!list || !text) return;
-    var empty = list.querySelector(".trace-empty");
-    if (empty) list.removeChild(empty);
-    var item = document.createElement("li");
-    if (tone) item.setAttribute("data-tone", tone);
-    item.innerHTML = "<b>" + clock() + "</b> " + escapeHtml(text);
-    list.appendChild(item);
-    while (list.children.length > TRACE_MAX) list.removeChild(list.firstChild);
-  }
-
   /* ---------------------------------------------------------------- boot */
   // The boot sequence is decoration, so it can never trap the user: it fills
   // itself in, finishes as soon as the backend answers, and gives up on its own
   // if nothing ever answers.
   var boot = { done: false, step: 0, timer: null, auto: null };
 
+  // The boot screen's own little core: a gold ring collapsing into a hot heart,
+  // drawn on the same rules as the main reactor.  Runs only while booting.
+  var bootCore = (function () {
+    var canvas = /** @type {HTMLCanvasElement|null} */ ($("boot-canvas"));
+    var ctx = canvas ? canvas.getContext("2d") : null;
+    var raf = null;
+    var t = 0;
+    var stopped = true;
+
+    function draw() {
+      raf = null;
+      if (!ctx || !canvas || stopped) return;
+      t += 0.02;
+      // round, so the size comparison below is stable and the canvas is not
+      // reallocated (which clears it) on every single frame
+      var side = Math.max(60, Math.round(canvas.clientWidth || 240));
+      var mid = side / 2;
+      var R = mid * 0.72;
+      if (canvas.width !== side) { canvas.width = side; canvas.height = side; }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, side, side);
+
+      var heart = ctx.createRadialGradient(mid, mid, 0, mid, mid, R);
+      heart.addColorStop(0, "rgba(255, 250, 226, 0.95)");
+      heart.addColorStop(0.35, "rgba(255, 190, 70, 0.85)");
+      heart.addColorStop(1, "rgba(180, 80, 8, 0)");
+      ctx.fillStyle = heart;
+      ctx.beginPath(); ctx.arc(mid, mid, R, 0, Math.PI * 2); ctx.fill();
+
+      ctx.globalCompositeOperation = "lighter";
+      ctx.strokeStyle = "rgba(255, 206, 120, 0.7)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(mid, mid, R * (0.5 + 0.5 * ((t * 0.5) % 1)), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(255, 236, 180, 0.5)";
+      ctx.lineWidth = 1.4;
+      for (var i = 0; i < 3; i++) {
+        var a = t * (0.6 + i * 0.4) + i * 2.1;
+        ctx.beginPath();
+        ctx.arc(mid, mid, R * (0.6 + i * 0.14), a, a + 1.6);
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = "source-over";
+      raf = requestAnimationFrame(draw);
+    }
+
+    return {
+      start: function () { stopped = false; if (raf === null) draw(); },
+      stop: function () { stopped = true; if (raf !== null) { cancelAnimationFrame(raf); raf = null; } },
+    };
+  })();
+
   function startBoot() {
     var bar = $("boot-bar");
     if (!bar) { boot.done = true; return; }
+    bootCore.start();
     boot.timer = setInterval(function () {
       if (boot.step < bar.children.length) bar.children[boot.step].classList.add("on");
       boot.step += 1;
@@ -343,6 +407,7 @@
     }
     var message = $("boot-note");
     if (message && note) message.textContent = note;
+    bootCore.stop();
     var overlay = $("boot");
     if (overlay) {
       overlay.classList.add("done");
@@ -384,6 +449,8 @@
     var rows = [
       ["host", machine.host || "unknown"],
       ["board", machine.board || (machine.is_pi ? "raspberry pi" : "generic")],
+      ["gpu", machine.gpu || "\u2014"],
+      ["country", machine.country || "\u2014"],
       ["load", machine.load === null || machine.load === undefined ? "\u2014" : machine.load],
       ["uptime", machine.uptime || "\u2014"],
       ["cores", machine.cpu_count || "\u2014"],
@@ -437,11 +504,20 @@
     var opts = options || {};
     var headers = { "Content-Type": "application/json" };
     if (TOKEN) headers["X-Jarvis-Token"] = TOKEN;
+    // A request that never settles must not wedge the console.  Without this a
+    // hung /api/chat left `state.busy` true and the Send button disabled for the
+    // rest of the session - the "send button does nothing" bug.
+    var timeoutMs = opts.timeoutMs || 25000;
+    var controller = typeof AbortController === "function" ? new AbortController() : null;
+    var timer = controller ? setTimeout(function () { controller.abort(); }, timeoutMs) : null;
+    var stopTimer = function () { if (timer) { clearTimeout(timer); timer = null; } };
     return fetch(path, {
       method: opts.method || "GET",
       headers: headers,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: controller ? controller.signal : undefined,
     }).then(function (response) {
+      stopTimer();
       if (response.status === 401) {
         // Say where the token actually lives: "reopen with ?token=" on its own
         // is a dead end for anyone who has never set one.
@@ -458,6 +534,12 @@
         });
       }
       return response.json();
+    }, function (error) {
+      stopTimer();
+      if (controller && error && error.name === "AbortError") {
+        throw new Error("the request timed out after " + Math.round(timeoutMs / 1000) + "s");
+      }
+      throw error;
     });
   }
 
@@ -507,7 +589,6 @@
     if (coreMode) coreMode.textContent = shown;
     if (changed) {
       pushFeed("state · " + shown);
-      pushTrace(shown, name === "error" ? "warn" : (name === "thinking" || name === "working" ? "busy" : ""));
     }
   }
 
@@ -653,13 +734,6 @@
     if (node && node.parentNode) node.parentNode.removeChild(node);
   }
 
-  /** "Built by Ayush." - the "for Ayush" half only appears when it is someone else. */
-  function creditText(creator, owner) {
-    var who = creator || owner || "";
-    if (!creator || creator === owner) return "Built by " + who + ".";
-    return "Built by " + creator + " for " + owner + ".";
-  }
-
   function seedIntro() {
     clearThread();
     var article = document.createElement("article");
@@ -669,8 +743,6 @@
       '<div class="hero" aria-hidden="true"><span class="hero-ring"></span>' +
       '<span class="hero-ring hero-ring-2"></span><span class="hero-core">J</span></div>' +
       "<p><strong>" + escapeHtml(identity.assistant) + "</strong> is online.</p>" +
-      '<p class="muted" id="intro-credit">' +
-      escapeHtml(creditText(identity.creator, identity.owner)) + "</p>" +
       '<p class="muted">Type a message, tap <strong>Talk</strong> to speak, or ' +
       "<strong>Live Talk</strong> for a hands-free conversation.</p>" +
       '<div class="suggestions" id="suggestions">' +
@@ -1442,20 +1514,17 @@
     setBusy(true);
     showTyping("thinking");
     setState("thinking", "thinking");
-    var startedAt = Date.now();
 
-    return api("/api/chat", { method: "POST", body: { text: message } })
+    // A chat turn legitimately takes a while: give it a generous ceiling, but a
+    // ceiling all the same, so the Send button always comes back.
+    return api("/api/chat", { method: "POST", body: { text: message }, timeoutMs: 120000 })
       .then(function (payload) {
         removeTyping();
-        var reply = payload.reply || {};
-        pushTrace("answered by " + (reply.provider || "offline") + " \u00b7 "
-          + ((Date.now() - startedAt) / 1000).toFixed(1) + "s", "ok");
         return handleReply(payload.reply);
       })
       .catch(function (error) {
         removeTyping();
         addMessage("assistant", "I couldn't reach the brain: " + error.message, { error: true });
-        pushTrace("request failed \u00b7 " + error.message, "warn");
         setState("error", "offline");
       })
       .then(function () {
@@ -1775,10 +1844,6 @@
       identity.creator = who.creator || identity.creator || identity.owner;
       document.title = who.assistant;
       setText("intro-name", who.assistant);
-      var credit = $("intro-credit");
-      if (credit) {
-        credit.textContent = creditText(identity.creator, identity.owner);
-      }
       setText("brand-sub", "personal ai · " + identity.owner);
     }
     var status = payload.status || {};
@@ -1977,20 +2042,17 @@
         showTyping(event.tool);
         setState("working", event.tool);
         pushFeed("tool → " + event.tool);
-        pushTrace("running " + event.tool, "busy");
         break;
       case "tool_result":
         removeTyping();
         if (!event.ok) addMessage("system", event.tool + " failed: " + (event.error || "unknown error"));
         pushFeed(event.tool + (event.ok ? " · ok" : " · failed"), event.ok ? "ok" : "warn");
-        pushTrace(event.tool + (event.ok ? " ok" : " failed"), event.ok ? "ok" : "warn");
         break;
       case "confirm":
         setState("working", "waiting for your go-ahead");
         break;
       case "provider":
         addMessage("system", event.message || "switching provider");
-        pushTrace((event.provider ? event.provider + " unavailable - next brain up" : "switching provider"), "warn");
         refresh().catch(function () {});
         break;
       case "stt_error":
