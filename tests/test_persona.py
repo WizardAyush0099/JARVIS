@@ -107,3 +107,24 @@ def test_wants_joke_reads_the_cue_words():
     assert persona.wants_joke("tell me a joke")
     assert persona.wants_joke("something funny please")
     assert not persona.wants_joke("what is the weather")
+
+
+# --------------------------------------------------------------------------- #
+# end to end, through the brain
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("insult", ["you are useless", "fuck you", "jarvis you are an idiot"])
+def test_the_brain_never_apologises_for_an_insult(jarvis, insult):
+    """The guard is only worth anything if it is on the real reply path."""
+    reply = jarvis.handle(insult, source="test")
+    text = reply.text or ""
+    assert text, "an insult must still get an answer"
+    # The real invariant is "no apology", not "the word sorry never appears" -
+    # a comeback like "I'm not sorry, and I'm not going to be" is the opposite.
+    assert not persona.has_apology(text), text
+    assert "apolog" not in text.lower()
+
+
+def test_the_brain_answers_a_joke_request_offline(jarvis):
+    """A joke must cost no API call - it is answered from the local bank."""
+    reply = jarvis.handle("tell me a joke about programmers", source="test")
+    assert (reply.text or "") in persona.JOKES["programmer"]
