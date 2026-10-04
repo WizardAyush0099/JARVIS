@@ -13,6 +13,7 @@ from ai.providers import (
     OpenAICompatProvider,
     ProviderAuthError,
     ProviderRateLimited,
+    ProviderTimeout,
     ProviderUnavailable,
 )
 from config.settings import ProviderConfig, Settings
@@ -115,6 +116,44 @@ def test_transient_failure_is_retried(settings):
     assert ask(manager) == "eventually worked"
     health = manager._health["flaky"]
     assert health.successes == 1 and health.failures == 0
+
+
+def test_a_timeout_is_never_retried(settings):
+    """Three 45s attempts to a dead provider is exactly the "too slow" bug.
+
+    A timeout already spent the provider's whole budget once; retrying it only
+    multiplies the wait, so it must take the fall-through immediately.
+    """
+    settings.ai.max_retries = 2  # would be three attempts for a generic transient
+    manager = make_manager(
+        settings,
+        [("hanging", ProviderTimeout("hanging", "the provider timed out")), ("good", "backup")],
+    )
+    assert ask(manager) == "backup"
+    assert manager.providers[0].calls == 1, "a timeout must not be retried"
+
+
+def test_a_plain_transient_failure_is_still_retried(settings):
+    """The instant, cheap failures keep their retry budget."""
+    settings.ai.max_retries = 1
+    manager = make_manager(settings, [("flaky", ProviderUnavailable("flaky", "connection refused"))])
+    with pytest.raises(AllProvidersFailed):
+        ask(manager)
+    assert manager.providers[0].calls == 2
+
+
+def test_timeouts_are_classified_as_timeouts():
+    from ai.http import HttpError
+    from ai.providers import ProviderTimeout, classify_http_error
+
+    assert isinstance(classify_http_error("x", TimeoutError("took too long")), ProviderTimeout)
+    assert isinstance(
+        classify_http_error("x", HttpError("request timed out")), ProviderTimeout
+    )
+    # a network error is *not* a timeout: it is instant, so it stays retryable
+    assert not isinstance(
+        classify_http_error("x", HttpError("network error: refused")), ProviderTimeout
+    )
 
 
 def test_emptiness_is_treated_as_a_failure(settings):

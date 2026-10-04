@@ -143,6 +143,16 @@ class ProviderUnavailable(ProviderError):
     """Network problem, timeout, 5xx or the local daemon is not running."""
 
 
+class ProviderTimeout(ProviderUnavailable):
+    """The provider accepted the request and then never answered.
+
+    Separate from the other transient failures on purpose: a timeout has already
+    consumed its whole budget once, so retrying it only multiplies the wait.  A
+    connection that is refused fails instantly and *is* worth retrying; a request
+    that hangs for the full timeout is not.
+    """
+
+
 class ProviderRateLimited(ProviderError):
     """Quota exhausted / too many requests.  Cool down then move on."""
 
@@ -168,6 +178,12 @@ def classify_http_error(slug: str, exc: Exception) -> ProviderError:
     """Turn an :class:`HttpError` (or anything else) into a provider error."""
     if isinstance(exc, ProviderError):
         return exc
+    # ``socket.timeout`` is ``TimeoutError`` on every supported Python, so this
+    # catches the transport layer as well as the HttpError below.
+    if isinstance(exc, TimeoutError):
+        return ProviderTimeout(slug, "the provider timed out")
+    if isinstance(exc, HttpError) and exc.status is None and "timed out" in f"{exc.message} {exc}".lower():
+        return ProviderTimeout(slug, "the provider timed out")
     if isinstance(exc, HttpError):
         body = (exc.body or "").lower()
         status = exc.status
