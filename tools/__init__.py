@@ -8,6 +8,7 @@ it immediately.
 
 from tools import base  # noqa: F401
 from tools import coding  # noqa: F401
+from tools import documents  # noqa: F401
 from tools import email_tool  # noqa: F401
 from tools import files  # noqa: F401
 from tools import image  # noqa: F401
@@ -42,6 +43,7 @@ from tools.base import (  # noqa: F401
 MODULES = (
     base,
     coding,
+    documents,
     email_tool,
     files,
     image,

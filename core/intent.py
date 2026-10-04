@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from core import language as lang_layer
+from core import persona
 from core import visitors
 
 
@@ -122,6 +123,23 @@ def _rule_greeting(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
         else:
             reply = f"Systems online. What do you need, {owner}?"
         return Intent("greeting", category="identity", direct_reply=reply, reason="greeting")
+    return None
+
+
+def _rule_joke(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
+    """"Tell me a joke" is a request for one line, not a model round trip.
+
+    A joke is a gift of a rule: the answer is instant, works offline, and never
+    burns an API call on the one question whose whole value is the timing.
+    """
+    if not persona.looks_like_abuse(text) and persona.wants_joke(text):
+        return Intent(
+            "joke",
+            direct_reply=persona.joke(text),
+            category="persona",
+            confidence=0.95,
+            reason="joke request",
+        )
     return None
 
 
@@ -956,6 +974,7 @@ def _rule_power(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
 
 RULE_FUNCTIONS: Sequence[Callable[[str, Dict[str, Any]], Optional[Intent]]] = (
     _rule_greeting,
+    _rule_joke,
     _rule_identity,
     _rule_visitor,
     _rule_capabilities,

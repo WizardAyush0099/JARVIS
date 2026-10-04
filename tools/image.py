@@ -27,6 +27,23 @@ log = get_logger("tools.image")
 
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 
+#: Magic bytes for the formats a provider may legitimately return.  A 200 with
+#: an HTML error page used to be saved as a "PNG", so the bytes are checked
+#: before anything is written to disk.
+_IMAGE_MAGIC = (
+    b"\x89PNG\r\n\x1a\n",
+    b"\xff\xd8\xff",
+    b"GIF87a",
+    b"GIF89a",
+    b"RIFF",  # WebP
+)
+
+
+def _looks_like_image(data: bytes) -> bool:
+    if not data or len(data) < 128:
+        return False
+    return any(data.startswith(magic) for magic in _IMAGE_MAGIC)
+
 
 def _safe_name(prompt: str, max_words: int = 6) -> str:
     words = re.findall(r"[A-Za-z0-9]+", (prompt or "image").lower())[:max_words]
@@ -52,18 +69,38 @@ def _web_url(path: Path, ctx: Optional[ToolContext]) -> str:
 
 
 def _pollinations(prompt: str, width: int, height: int, timeout: float) -> bytes:
+    """Keyless image generation, trying more than one model before giving up.
+
+    The service is free and keyless, so it is also occasionally busy: a 500 on
+    one model is often a 200 on the next, and a failed render can come back as
+    an HTML error page with a 200, so the bytes are validated here.
+    """
     encoded = urllib.parse.quote(prompt.strip()[:1500], safe="")
-    url = (
-        f"https://image.pollinations.ai/prompt/{encoded}"
-        f"?width={width}&height={height}&nologo=true&safe=false&seed={int(time.time()) % 100000}"
-    )
-    return request_bytes(
-        url,
-        headers={"Accept": "image/*"},
-        timeout=timeout,
-        retries=1,
-        max_bytes=MAX_IMAGE_BYTES,
-    )
+    last: Optional[bytes] = None
+    for model in ("flux", "turbo"):
+        url = (
+            f"https://image.pollinations.ai/prompt/{encoded}"
+            f"?width={width}&height={height}&model={model}"
+            f"&nologo=true&safe=false&seed={int(time.time()) % 100000}"
+        )
+        try:
+            data = request_bytes(
+                url,
+                headers={"Accept": "image/*"},
+                timeout=timeout,
+                retries=1,
+                max_bytes=MAX_IMAGE_BYTES,
+            )
+        except HttpError as exc:
+            log.warning("pollinations model %s failed: %s", model, exc)
+            continue
+        last = data
+        if _looks_like_image(data):
+            return data
+        log.warning("pollinations model %s returned %d bytes that are not an image", model, len(data))
+    if last is not None:
+        raise RuntimeError("the image service returned something that is not an image")
+    raise RuntimeError("every image model refused the request")
 
 
 def _openai_images(prompt: str, width: int, height: int, settings: Any, timeout: float) -> bytes:
@@ -154,7 +191,7 @@ def generate_image(
             "image generation failed (" + "; ".join(errors[:2]) + "). "
             "Check the internet connection or set IMAGE_PROVIDER/OPENAI_API_KEY."
         )
-    if len(data) < 100:
+    if not _looks_like_image(data):
         return ToolResult.failure("the image service returned an invalid file")
 
     path = _output_path(ctx, text)

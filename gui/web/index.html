@@ -17,7 +17,8 @@
   <div class="boot-frame">
     <span class="tick tick-tl"></span><span class="tick tick-tr"></span>
     <span class="tick tick-bl"></span><span class="tick tick-br"></span>
-    <p class="boot-title">INITIATING SYSTEM 1<span class="boot-dots">...</span></p>
+    <canvas class="boot-canvas" id="boot-canvas" width="240" height="240" aria-hidden="true"></canvas>
+    <p class="boot-title">JARVIS<span class="boot-dots">...</span></p>
     <div class="boot-bar" id="boot-bar" aria-hidden="true">
       <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
     </div>
@@ -27,6 +28,15 @@
 </div>
 
 <div class="grid-overlay" aria-hidden="true"></div>
+
+<!-- ambient core: the same plasma, blurred and dimmed, breathing behind the
+     whole console.  Pure CSS transforms, so it costs the Pi almost nothing. -->
+<div class="jarvis-bg" aria-hidden="true">
+  <span class="jb-bloom"></span>
+  <span class="jb-arc jb-arc-1"></span>
+  <span class="jb-arc jb-arc-2"></span>
+  <span class="jb-scan"></span>
+</div>
 
 <div id="offline-banner" class="banner hidden" role="status">
   <strong>Backend offline.</strong>
@@ -45,7 +55,7 @@
     </div>
     <div class="brand-text">
       <h1>JARVIS</h1>
-      <p id="brand-sub">personal ai &middot; connecting&hellip;</p>
+      <p id="brand-sub">systems nominal</p>
     </div>
   </div>
 
@@ -120,14 +130,16 @@
 
     <div class="core-stage">
       <div class="reactor" id="reactor" aria-hidden="true">
-        <canvas id="core-canvas" width="360" height="360"></canvas>
         <span class="reactor-glow"></span>
+        <span class="reactor-halo"></span>
+        <canvas id="core-canvas" width="512" height="512"></canvas>
+        <span class="reactor-arc reactor-arc-1"></span>
+        <span class="reactor-arc reactor-arc-2"></span>
+        <span class="reactor-arc reactor-arc-3"></span>
         <span class="reactor-ring reactor-ring-1"></span>
         <span class="reactor-ring reactor-ring-2"></span>
-        <span class="reactor-ring reactor-ring-3"></span>
         <span class="reactor-ticks"></span>
         <span class="reactor-sweep"></span>
-        <span class="reactor-core"></span>
       </div>
       <div class="core-meta">
         <span class="core-word">J A R V I S</span>
@@ -152,13 +164,6 @@
       <span class="engines-note" id="engines-note"></span>
     </div>
 
-    <div class="trace" id="trace-strip" aria-live="polite">
-      <span class="trace-label micro">cognition trace</span>
-      <ol class="trace-list" id="trace-list">
-        <li class="trace-empty">waiting for the first signal</li>
-      </ol>
-    </div>
-
     <div id="visitor" class="visitor hidden" role="status">
       <span class="visitor-mark" aria-hidden="true"></span>
       <span class="visitor-text">visitor protocol &middot; <strong id="visitor-label">&mdash;</strong></span>
@@ -173,9 +178,8 @@
             <span class="hero-core">J</span>
           </div>
           <p><strong id="intro-name">JARVIS</strong> is online.</p>
-          <p class="muted" id="intro-credit">Built by Ayush.</p>
-          <p class="muted">Type a message, tap <strong>Talk</strong> to speak, or
-          <strong>Live Talk</strong> for a hands-free conversation.</p>
+          <p class="muted">All systems are up. Type below, tap <strong>Talk</strong> to
+          speak, or start <strong>Live Talk</strong> for a hands-free conversation.</p>
           <div class="suggestions" id="suggestions">
             <button class="chip" data-fill="system status">system status</button>
             <button class="chip" data-fill="what time is it">what time is it</button>
