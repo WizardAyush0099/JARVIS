@@ -1368,6 +1368,13 @@
 
   var speechJob = { generation: 0, queue: [], text: "" };
 
+  /** Resolves once this page's claim on the voice has settled (success or not).
+   *
+   *  ``requestSpeech`` waits on it so a reply arriving during page load is not
+   *  handed to a server that still thinks the Pi's own speaker owns the voice.
+   */
+  var audioClaimPromise = null;
+
   /** Drop whatever is queued and stop the current sound (barge-in). */
   function stopSpeech() {
     speechJob.generation += 1;
@@ -1429,13 +1436,21 @@
     if (!forced && (state.voiceMuted || !state.voiceAvailable)) return Promise.resolve(false);
     var chunks = splitSpeech(text);
     if (!chunks.length) return Promise.resolve(false);
-    stopSpeech();
-    var generation = speechJob.generation;
-    speechJob.text = text;
-    speechJob.queue = chunks.map(function (chunk, index) {
-      return { text: chunk, url: null, pending: null, failed: false, first: index === 0 };
+    // The page has to own the voice before the server will hand it audio, and
+    // that claim is made when the socket opens - which can still be in flight
+    // when the first reply or reminder arrives.  Firing now would get 409 on
+    // every chunk and lose the whole reply in silence.
+    var mark = speechJob.generation;
+    return (audioClaimPromise || Promise.resolve()).then(function () {
+      if (speechJob.generation !== mark) return false; // cancelled while waiting
+      stopSpeech();
+      var generation = speechJob.generation;
+      speechJob.text = text;
+      speechJob.queue = chunks.map(function (chunk, index) {
+        return { text: chunk, url: null, pending: null, failed: false, first: index === 0 };
+      });
+      return pumpSpeech(generation);
     });
-    return pumpSpeech(generation);
   }
 
   function unlockAudio() {
@@ -2228,17 +2243,22 @@
 
   /** A web client plays the voice itself, so claim it from the Pi's speaker. */
   function claimBrowserAudio() {
-    if (state.audioClaimed) return;
-    if (state.voiceMuted || voicePreference() !== "browser") return;
-    if (!state.voiceAvailable || !state.voiceConfigured) return;
-    if (state.voiceOut === "browser") return; // already ours
+    if (state.audioClaimed) return audioClaimPromise || Promise.resolve();
+    if (state.voiceMuted || voicePreference() !== "browser") return Promise.resolve();
+    if (!state.voiceAvailable || !state.voiceConfigured) return Promise.resolve();
+    if (state.voiceOut === "browser") return Promise.resolve(); // already ours
     state.audioClaimed = true; // one attempt per user action, not per snapshot
-    api("/api/speech", { method: "POST", body: { mode: "browser" } })
+    audioClaimPromise = api("/api/speech", { method: "POST", body: { mode: "browser" } })
       .then(function (payload) {
         state.voiceOut = payload.mode === "off" ? state.voiceOut : payload.mode;
         setControls();
+        return true;
       })
-      .catch(function () { state.audioClaimed = false; });
+      .catch(function () {
+        state.audioClaimed = false;
+        return false;
+      });
+    return audioClaimPromise;
   }
 
   /* ---------------------------------------------------------------- wiring */

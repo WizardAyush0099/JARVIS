@@ -6,6 +6,8 @@ secrets, no one-off task state, no churn, and nothing learnt from a stranger.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from core import learning
@@ -146,3 +148,62 @@ def test_learn_runs_end_to_end(settings, memory):
     stored = learning.learn(ai, "i am building Athena in Shimla", "Good.", memory)
     assert set(stored) == {"main project", "city"}
     assert memory.facts()["main project"] == "Athena"
+
+
+# --------------------------------------------------------------------------- #
+# the wiring inside a real turn
+# --------------------------------------------------------------------------- #
+def _wait_for(predicate, timeout: float = 3.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
+def test_a_finished_turn_really_teaches_the_brain(jarvis):
+    """The background worker runs for real, not just in the unit tests.
+
+    ``_learn_async`` swallows every exception, so a wrong attribute name there
+    would be invisible.  This drives an actual turn end to end.
+    """
+    jarvis.ai.has_online_provider = lambda: True
+    jarvis.ai.chat_json = lambda *args, **kwargs: {"facts": {"city": "Shimla"}}
+
+    jarvis.handle("i live in Shimla with my dog", source="text")
+
+    assert _wait_for(lambda: jarvis.memory.facts().get("city") == "Shimla"), (
+        "a personal turn was not learnt - the background worker never stored it"
+    )
+
+
+def test_learning_does_not_stack_on_a_fast_conversation(jarvis):
+    # The planner uses the same provider, so only learning calls are counted -
+    # otherwise the planner's own call is mistaken for a second extraction.
+    learning_calls = []
+
+    def counting(messages, system=None, **kwargs):
+        if system and "extract durable facts" in system:
+            learning_calls.append(1)
+            return {"facts": {"city": "Shimla"}}
+        return {"steps": [], "reply": "Noted."}
+
+    jarvis.ai.has_online_provider = lambda: True
+    jarvis.ai.chat_json = counting
+
+    jarvis.handle("i live in Shimla", source="text")
+    assert _wait_for(lambda: len(learning_calls) == 1)
+    jarvis.handle("my city is Shimla still", source="text")
+    time.sleep(0.3)
+    assert len(learning_calls) == 1, "the cooldown did not stop a second extraction call"
+
+
+def test_a_stranger_is_never_learnt(jarvis, monkeypatch):
+    jarvis.ai.has_online_provider = lambda: True
+    jarvis.ai.chat_json = lambda *args, **kwargs: {"facts": {"city": "Shimla"}}
+    monkeypatch.setattr(jarvis, "visitor_brief", lambda: "VISITOR MODE: a stranger")
+
+    jarvis.handle("my name is Mallory and i live in Shimla", source="text")
+    time.sleep(0.3)
+    assert jarvis.memory.facts() == {}, "a visitor's details were written to memory"
