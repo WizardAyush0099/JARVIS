@@ -614,7 +614,19 @@ def _rule_media(text: str, ctx: Dict[str, Any]) -> Optional[Intent]:
             category="media", reason="like",
         )
 
-    # -- liked songs ----------------------------------------------------- #
+    # -- *playing* the library, before listing it -------------------------- #
+    # "play my liked songs" used to hit the list rule below and just print the
+    # first ten titles.  Playing is a different tool, so it is matched first.
+    if re.search(
+        r"\b(?:play|start|shuffle|put on)\b[^.?!]*\b(?:liked|saved|favourite|favorite)\s+(?:songs|tracks|music|library)\b",
+        text,
+    ) or re.search(r"\bplay\b[^.?!]*\bliked\b", text):
+        return Intent(
+            "spotify_play_liked", tool="spotify_play_liked", category="media",
+            reason="play liked songs",
+        )
+
+    # -- liked songs (listing) ------------------------------------------- #
     if re.search(
         r"\b(?:my|the)\s+(?:liked|saved|favourite|favorite)\s+(?:songs|tracks|music)\b", text
     ) or re.search(r"\b(?:show|list|what are|see|open)\b[^.?!]*\b(?:liked|saved|favourite|favorite)\s+(?:songs|tracks)\b", text):

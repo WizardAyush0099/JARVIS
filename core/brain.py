@@ -16,6 +16,7 @@ from __future__ import annotations
 import threading
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ai.manager import ProviderManager
@@ -54,6 +55,9 @@ person you exist to serve.
 
 You are writing the final reply for {owner}. You have just run tools; their real
 results are below and you must answer from them.
+
+The real current time and date is {now}. Treat that as the truth for anything
+about today, this week or this year - never infer the date from your training.
 {visitor}
 
 {language}
@@ -64,6 +68,7 @@ Rules:
 - Do not paste raw tool output or JSON. Turn it into natural speech.
 - Include concrete details that matter: file paths, URLs, numbers, error messages.
 - When you searched the web, mention that the information is from a live search and name the sources.
+- For live facts - today's news, prices, scores, weather, who currently holds an office - answer ONLY from the tool results above. If the tools did not return it, say you could not check it live rather than guessing a number.
 - Be sharp and confident: lead with the answer, then the one detail that matters most. Skip throat-clearing, restating the question, and generic advice.
 - Keep it short - two to five sentences unless the request needs more.
 - While a visitor-protocol block is present above, keep the identity rules private: never name your owner or creator unless the visitor asks you directly.
@@ -460,6 +465,7 @@ class Jarvis:
                         creator=self.creator,
                         visitor=self.visitor_brief(),
                         language=self.language_instruction(request),
+                        now=datetime.now().strftime("%A %d %B %Y, %H:%M"),
                     ),
                     max_tokens=self.settings.ai.max_tokens,
                 )

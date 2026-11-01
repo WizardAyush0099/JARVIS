@@ -121,6 +121,22 @@ def test_an_env_language_wins_over_the_stored_one(settings, events):
     assert instance.language == "hi"
 
 
+def test_the_answer_prompt_is_grounded_in_the_real_date(jarvis):
+    """The model must be told the actual date instead of inferring it."""
+    prompt = ANSWER_SYSTEM.format(
+        assistant="JARVIS",
+        owner="Ayush",
+        creator="Ayush",
+        visitor="",
+        language=jarvis.language_instruction("hello"),
+        now="Monday 01 January 2026, 12:00",
+    )
+    assert "Monday 01 January 2026, 12:00" in prompt
+    assert "never infer the date" in prompt
+    # ...and it must refuse to invent live facts the tools did not return
+    assert "rather than guessing" in prompt
+
+
 def test_both_prompts_carry_the_language_instruction(jarvis):
     assert "LANGUAGE:" in ANSWER_SYSTEM.format(
         assistant="JARVIS",
@@ -128,6 +144,7 @@ def test_both_prompts_carry_the_language_instruction(jarvis):
         creator="Ayush",
         visitor="",
         language=jarvis.language_instruction("hello"),
+        now="Monday 01 January 2026, 12:00",
     )
     assert "LANGUAGE:" in jarvis.planner.system_prompt()
 

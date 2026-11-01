@@ -319,9 +319,9 @@ body[data-state="error"] .orb-core { background: radial-gradient(circle at 40% 3
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  gap: 14px;
-  padding: 14px;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
   align-items: start;
 }
 
@@ -360,7 +360,7 @@ body[data-state="error"] .orb-core { background: radial-gradient(circle at 40% 3
 .rail-btn:hover { color: var(--cyan); border-color: var(--line-strong); background: rgba(56, 214, 255, 0.08); }
 
 /* ------------------------------------------------------------------ chat column */
-.chat { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.chat { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 
 .core-stage {
   position: relative;
@@ -368,8 +368,8 @@ body[data-state="error"] .orb-core { background: radial-gradient(circle at 40% 3
   align-items: center;
   justify-content: center;
   gap: clamp(16px, 4vw, 40px);
-  padding: 10px 14px 6px;
-  min-height: 172px;
+  padding: 6px 12px 2px;
+  min-height: 132px;
 }
 .reactor { position: relative; width: clamp(128px, 26vw, 176px); aspect-ratio: 1; flex: none; }
 .reactor span { position: absolute; border-radius: 50%; }
@@ -428,10 +428,15 @@ body[data-state="speaking"] .reactor-sweep { animation-duration: 2.4s; }
 .core-meta { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .core-word {
   font-family: var(--mono);
-  font-size: clamp(15px, 3vw, 22px);
-  letter-spacing: 0.34em;
-  color: #f4fdff;
-  text-shadow: 0 0 24px rgba(56, 214, 255, 0.6);
+  font-size: clamp(17px, 3.4vw, 26px);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  /* the wordmark is the same molten gold as the core */
+  color: #ffe9c2;
+  background: linear-gradient(180deg, #fff6e0, var(--plasma) 68%, var(--plasma-deep));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
   white-space: nowrap;
 }
 .core-sub { color: var(--text-dim); }
@@ -926,8 +931,8 @@ body[data-live="on"] #btn-live {
 }
 .panel::before { top: 6px; left: 6px; border-right: none; border-bottom: none; }
 .panel::after { bottom: 6px; right: 6px; border-left: none; border-top: none; }
-.panel-body { padding: 12px 14px 30px; overflow-y: auto; }
-.block { margin-bottom: 20px; border-radius: var(--radius-sm); padding: 2px; }
+.panel-body { padding: 10px 12px 24px; overflow-y: auto; }
+.block { margin-bottom: 14px; border-radius: var(--radius-sm); padding: 2px; }
 .block.flash { animation: block-flash 0.9s ease; }
 @keyframes block-flash {
   0% { background: rgba(56, 214, 255, 0.18); }
@@ -1384,7 +1389,7 @@ body[data-media="playing"] .np-title { color: #d8ffe9; }
   #btn-panel { display: none; }
   /* leaves room for the topbar, the core stage, the console bar and the
      composer, so the whole console fits a laptop screen without scrolling */
-  .thread { max-height: calc(100dvh - 560px); min-height: 180px; }
+  .thread { max-height: calc(100dvh - 470px); min-height: 200px; }
 }
 
 @media (max-width: 1179px) {

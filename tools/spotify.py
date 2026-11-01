@@ -63,6 +63,14 @@ PREMIUM_HINT = (
     "whatever is already playing."
 )
 
+SCOPE_HINT = (
+    "Spotify is linked, but the saved token does not include the "
+    "'user-library-read' permission, so it cannot see your Liked Songs. Spotify "
+    "only grants the permissions you approve at authorisation time. Re-run "
+    "`.venv/bin/python scripts/spotify_auth.py`, approve every permission it "
+    "lists, then restart JARVIS."
+)
+
 #: token cache: {access_token, expires_at}
 _CACHE: Dict[str, Any] = {"token": "", "expires_at": 0.0}
 
@@ -160,6 +168,12 @@ def _api(
             forget_token()
             return _api(path, method, payload, params, settings, retry_on_401=False)
         if exc.status == 403:
+            # A 403 is not only "needs Premium": Spotify also returns it when the
+            # token is missing a scope, which is exactly what happens when the
+            # one-time authorisation was approved without user-library-read.
+            body = (exc.body or "").lower()
+            if "scope" in body or path.startswith("/me/tracks"):
+                raise RuntimeError(SCOPE_HINT) from exc
             raise RuntimeError(PREMIUM_HINT) from exc
         if exc.status == 404:
             raise RuntimeError(
@@ -487,6 +501,64 @@ def spotify_liked_songs(limit: int = 10, ctx: Any = None) -> ToolResult:
     if isinstance(total, int):
         lines.append(f"({total} songs saved in total)")
     return ToolResult.success("\n".join(lines), data={"tracks": tracks, "total": total})
+
+
+@tool(
+    name="spotify_play_liked",
+    description=(
+        "Play the user's Spotify Liked Songs on the active device, shuffled. "
+        "Needs Spotify linked, a Premium account and an active Spotify device."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer", "description": "how many songs to queue (default 50, max 100)"}
+        },
+    },
+    category="media",
+    aliases=("play_liked_songs", "spotify_play_liked_songs"),
+)
+def spotify_play_liked(limit: int = 50, ctx: Any = None) -> ToolResult:
+    """Queue the saved library and play it - "play my liked songs".
+
+    Spotify has no "play the library" endpoint, so the saved tracks are read
+    first and handed to the player as a list of URIs.  Shuffle is best-effort:
+    some devices reject it, and that must not stop the music.
+    """
+    settings = getattr(ctx, "settings", None)
+    if _require_link(settings):
+        return ToolResult.failure(NOT_LINKED)
+    count = max(1, min(int(limit or 50), 100))
+    try:
+        data = _api("/me/tracks", params={"limit": count}, settings=settings)
+        entries = (data or {}).get("items") or []
+        uris = [
+            str((entry.get("track") or {}).get("uri") or "")
+            for entry in entries
+            if isinstance(entry, dict)
+        ]
+        uris = [uri for uri in uris if uri.startswith("spotify:track:")]
+        if not uris:
+            return ToolResult.failure(
+                "your Liked Songs are empty, so there is nothing to play - like a few "
+                "tracks in Spotify first and ask me again"
+            )
+        try:
+            _api("/me/player/shuffle", method="PUT", params={"state": "true"}, settings=settings)
+        except Exception:  # noqa: BLE001 - shuffle is a nicety, not the job
+            log.debug("could not enable shuffle; playing in order")
+        _play(uris=uris, settings=settings)
+    except RuntimeError as exc:
+        message = str(exc)
+        if "active device" in message.lower():
+            message += " Open Spotify anywhere first, then ask me again."
+        return ToolResult.failure(message)
+
+    first = (entries[0].get("track") or {}) if entries else {}
+    return ToolResult.success(
+        f"Playing your {len(uris)} liked songs, starting with {_track_line(first)}.",
+        data={"count": len(uris), "first": first.get("name")},
+    )
 
 
 @tool(

@@ -97,8 +97,10 @@ class FakeSpotify:
             return {
                 "total": 7,
                 "items": [
-                    {"track": {"name": "Kusanagi", "artists": [{"name": "ODESZA"}]}},
-                    {"track": {"name": "Loyal", "artists": [{"name": "ODESZA"}]}},
+                    {"track": {"uri": "spotify:track:kusanagi", "name": "Kusanagi",
+                               "artists": [{"name": "ODESZA"}]}},
+                    {"track": {"uri": "spotify:track:loyal", "name": "Loyal",
+                               "artists": [{"name": "ODESZA"}]}},
                 ],
             }
         if path == "/v1/search":
@@ -184,6 +186,25 @@ def test_liked_songs_are_listed(api: FakeSpotify, ctx):
     assert "Kusanagi" in result.output and "ODESZA" in result.output
     assert "7 songs saved in total" in result.output
     assert api.find("/v1/me/tracks", "GET")["query"]["limit"] == "2"
+
+
+def test_playing_liked_songs_queues_their_uris(api: FakeSpotify, ctx):
+    """"play my liked songs" must actually play them, not just list them."""
+    result = spotify_tools.spotify_play_liked(ctx=ctx)
+    assert result.ok is True, result.error
+    assert "2 liked songs" in result.output
+    played = api.find("/v1/me/player/play", "PUT")
+    assert played is not None
+    assert played["payload"]["uris"] == ["spotify:track:kusanagi", "spotify:track:loyal"]
+
+
+def test_a_missing_library_scope_is_not_blamed_on_premium(api: FakeSpotify, ctx):
+    """A 403 on the library is a scope problem, not a Premium problem."""
+    api.status_for["/v1/me/tracks"] = 403
+    result = spotify_tools.spotify_play_liked(ctx=ctx)
+    assert result.ok is False
+    assert "user-library-read" in result.error
+    assert "Premium" not in result.error
 
 
 def test_liking_saves_the_track_that_is_playing(api: FakeSpotify, ctx):
