@@ -14,6 +14,7 @@ the answer is composed from the real results rather than invented.
 from __future__ import annotations
 
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,6 +23,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from ai.manager import ProviderManager
 from ai.offline import OfflineEngine
 from config.settings import Settings
+from core import learning
 from core.events import (
     STATE_ERROR,
     STATE_IDLE,
@@ -45,6 +47,11 @@ from voice.stt import Listener
 from voice.tts import Speaker
 
 log = get_logger("brain")
+
+#: Seconds between background fact-learning runs.  Learning is opportunistic:
+#: a fast conversation must not stack extraction calls or spend the user's quota.
+LEARN_COOLDOWN = 90.0
+
 
 ANSWER_SYSTEM = """You are {assistant}, {owner}'s personal assistant.
 
@@ -195,6 +202,10 @@ class Jarvis:
         #: the request being answered, so the reply can be checked against it
         #: (persona.guard needs to know the turn was an insult)
         self._last_request = ""
+        # background learning: one worker at a time, rate-limited
+        self._learn_lock = threading.Lock()
+        self._learning = False
+        self._learned_at = 0.0
         self._voice_output = chosen if self.speaker is not None else "off"
         self._routing = self._voice_output if self._voice_output != "off" else "device"
         self._apply_voice_output()
@@ -302,6 +313,13 @@ class Jarvis:
     # ------------------------------------------------------------------ #
     def handle(self, text: str, source: str = "text") -> Reply:
         request = (text or "").strip()
+        reply = self._handle(request, source)
+        # Learn from the finished turn off the reply path: the user never waits
+        # for it, and a failure there can never break an answer.
+        self._learn_async(request, reply)
+        return reply
+
+    def _handle(self, request: str, source: str = "text") -> Reply:
         if not request:
             return Reply(text="I didn't catch that - try again?", source=source)
 
@@ -345,6 +363,49 @@ class Jarvis:
                     error=True,
                 )
             return self._run_plan(plan, request, source=source)
+
+    # ------------------------------------------------------------------ #
+    # learning
+    # ------------------------------------------------------------------ #
+    def _learn_async(self, request: str, reply: Reply) -> None:
+        """Pick up durable facts from this turn, off the reply path.
+
+        One worker at a time and a cooldown, so a fast conversation cannot stack
+        extraction calls or quietly spend the user's API quota.  A visitor's turn
+        is never learnt, and nothing happens without an online provider.
+        """
+        try:
+            if reply is None or not (reply.text or "").strip() or reply.error:
+                return
+            if self.ai is None or not getattr(self.ai, "has_online_provider", lambda: False)():
+                return
+            if self.memory is None or not learning.worth_reading(request):
+                return
+            if self.visitor_brief():
+                return  # never learn a stranger's details
+            now = time.time()
+            with self._learn_lock:
+                if self._learning or (now - self._learned_at) < LEARN_COOLDOWN:
+                    return
+                self._learning = True
+        except Exception:  # noqa: BLE001 - learning must never break a turn
+            return
+
+        text = reply.text
+
+        def run() -> None:
+            try:
+                stored = learning.learn(self.ai, request, text, self.memory)
+                if stored:
+                    log.info("learned %d fact(s): %s", len(stored), ", ".join(stored))
+            except Exception as exc:  # noqa: BLE001
+                log.debug("background learning failed: %s", exc)
+            finally:
+                with self._learn_lock:
+                    self._learning = False
+                    self._learned_at = time.time()
+
+        threading.Thread(target=run, name="jarvis-learn", daemon=True).start()
 
     # ------------------------------------------------------------------ #
     # execution

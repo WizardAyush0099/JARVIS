@@ -101,6 +101,7 @@ Rules:
 - Never claim a tool ran or invent its output. You will be shown the real results afterwards and you will write the final answer then.
 - If the request is ambiguous, pick the most useful interpretation and say what you assumed.
 - Prefer tools that work without extra setup, and prefer one step over several.
+- If the answer depends on *now* - today's news, prices, scores, the weather, who currently holds an office, the latest release or version - call a search or weather tool first. Never answer a live question from memory, and never guess a number or a date.
 
 Available tools:
 {tools}
