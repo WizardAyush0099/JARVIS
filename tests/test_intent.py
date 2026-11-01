@@ -369,3 +369,21 @@ def test_extract_expression_never_emits_letters():
 def test_rule_names_are_listed():
     assert "time" in intent.rule_names()
     assert len(intent.rule_names()) > 10
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["play my liked songs", "play liked songs", "shuffle my saved tracks", "start my favourite music"],
+)
+def test_playing_the_library_is_not_the_same_as_listing_it(text):
+    """"play my liked songs" used to fall into the *list* rule and print titles."""
+    found = match(text)
+    assert found is not None
+    assert found.tool == "spotify_play_liked"
+
+
+@pytest.mark.parametrize("text", ["show my liked songs", "list my liked songs", "what are my saved tracks"])
+def test_asking_to_see_the_library_still_lists_it(text):
+    found = match(text)
+    assert found is not None
+    assert found.tool == "spotify_liked_songs"

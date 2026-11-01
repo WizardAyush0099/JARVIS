@@ -738,10 +738,10 @@
     clearThread();
     var article = document.createElement("article");
     article.className = "msg intro";
+    // No hero orb here: the live plasma core sits directly above this block, and
+    // repeating it wasted vertical space the conversation needs.
     article.innerHTML =
       '<div class="msg-body">' +
-      '<div class="hero" aria-hidden="true"><span class="hero-ring"></span>' +
-      '<span class="hero-ring hero-ring-2"></span><span class="hero-core">J</span></div>' +
       "<p><strong>" + escapeHtml(identity.assistant) + "</strong> is online.</p>" +
       '<p class="muted">Type a message, tap <strong>Talk</strong> to speak, or ' +
       "<strong>Live Talk</strong> for a hands-free conversation.</p>" +
@@ -1280,30 +1280,146 @@
     }
   }
 
-  /** Play audio the backend produced and drive the "speaking" state. */
-  function playSpeechUrl(url) {
+  /* ---------------------------------------------------------------- speech */
+  // Speech is synthesised one sentence at a time.
+  //
+  // Sending the whole reply in a single request made the browser wait for the
+  // *entire* paragraph to be generated before the first sound, which is why the
+  // voice arrived long after the text.  Chunking overlaps synthesis with
+  // playback: the first sentence is heard while the rest is still being made.
+  var SPEECH_FIRST_MAX = 150;  // a short opening utterance starts the audio sooner
+  var SPEECH_CHUNK_MAX = 220;  // later chunks are longer, for natural prosody
+
+  function splitSpeech(text) {
+    var clean = String(text || "").replace(/\s+/g, " ").trim();
+    if (!clean) return [];
+    // keep the terminating punctuation with its sentence
+    var sentences = clean.match(/[^.!?]+[.!?]*/g) || [clean];
+    var pending = [];
+    for (var i = 0; i < sentences.length; i++) {
+      var sentence = sentences[i].trim();
+      if (sentence) pending.push(sentence);
+    }
+    if (!pending.length) return [];
+
+    var chunks = [];
+    var first = pending.shift();
+    if (first.length > SPEECH_FIRST_MAX) {
+      // break the opening sentence at a comma, else at a word boundary
+      var cut = first.indexOf(", ");
+      if (cut < 40) cut = first.lastIndexOf(" ", SPEECH_FIRST_MAX);
+      if (cut < 40) cut = SPEECH_FIRST_MAX;
+      chunks.push(first.slice(0, cut).trim());
+      var rest = first.slice(cut).replace(/^[\s,]+/, "").trim();
+      if (rest) pending.unshift(rest);
+    } else {
+      chunks.push(first);
+    }
+
+    var buffer = "";
+    pending.forEach(function (sentence) {
+      if (buffer && buffer.length + sentence.length + 1 > SPEECH_CHUNK_MAX) {
+        chunks.push(buffer);
+        buffer = sentence;
+      } else {
+        buffer = buffer ? buffer + " " + sentence : sentence;
+      }
+    });
+    if (buffer) chunks.push(buffer);
+    return chunks.filter(function (chunk) { return chunk.length > 0; });
+  }
+
+  /** Play one already-synthesised file.
+   *
+   *  ``keepSpeaking`` keeps the HUD in the speaking state when more utterances
+   *  are queued behind this one, so the core does not flicker between chunks.
+   */
+  function playSpeechUrl(url, keepSpeaking) {
     return new Promise(function (resolve) {
       if (!url) { resolve(false); return; }
       var audio = player();
       audio.src = url;
-      var finish = function () {
-        state.speaking = false;
-        if (!state.busy) setState(state.live ? "listening" : "idle", state.live ? "listening" : "idle");
-        resolve(true);
+      var settled = false;
+      var finish = function (ok) {
+        if (settled) return;
+        settled = true;
+        if (!keepSpeaking) {
+          state.speaking = false;
+          if (!state.busy) setState(state.live ? "listening" : "idle", state.live ? "listening" : "idle");
+        }
+        resolve(ok !== false);
       };
-      audio.onended = finish;
-      audio.onerror = finish;
+      audio.onended = function () { finish(true); };
+      audio.onerror = function () { finish(false); };
       state.speaking = true;
       setState("speaking", "speaking");
       var attempt = audio.play();
       if (attempt && attempt.then) {
         attempt.then(function () { state.needsUnlock = false; }, function () {
+          // The browser refused to autoplay (no gesture yet). Keep the text so
+          // the next tap replays the whole reply instead of dropping it.
           state.needsUnlock = true;
-          state.pendingSpeech = url;
           showAudioHint();
-          finish();
+          finish(false);
         });
       }
+    });
+  }
+
+  var speechJob = { generation: 0, queue: [], text: "" };
+
+  /** Drop whatever is queued and stop the current sound (barge-in). */
+  function stopSpeech() {
+    speechJob.generation += 1;
+    speechJob.queue = [];
+    speechJob.text = "";
+    state.speaking = false;
+    try { player().pause(); } catch (e) {}
+  }
+
+  function fetchSpeech(item) {
+    if (item.url || item.failed) return Promise.resolve(item.url || null);
+    if (item.pending) return item.pending;
+    item.pending = api("/api/speak", {
+      method: "POST", body: { text: item.text }, timeoutMs: 60000,
+    }).then(function (payload) {
+      if (payload && payload.url) item.url = payload.url;
+      else item.failed = true;
+      return item.url || null;
+    }).catch(function (error) {
+      item.failed = true;
+      item.error = error && error.message ? error.message : "speech failed";
+      return null;
+    }).then(function (url) { item.pending = null; return url; });
+    return item.pending;
+  }
+
+  function pumpSpeech(generation) {
+    if (generation !== speechJob.generation) return Promise.resolve(false);
+    var item = speechJob.queue.shift();
+    if (!item) {
+      state.speaking = false;
+      if (!state.busy) setState(state.live ? "listening" : "idle", state.live ? "listening" : "idle");
+      return Promise.resolve(true);
+    }
+    // warm the next utterance while this one plays, so joins are synthesis-free
+    if (speechJob.queue.length) fetchSpeech(speechJob.queue[0]);
+    return fetchSpeech(item).then(function (url) {
+      if (generation !== speechJob.generation) return false;
+      if (!url) {
+        // one failed sentence must not silence the rest of the reply
+        if (item.first && item.error) addMessage("system", "Voice: " + item.error);
+        return pumpSpeech(generation);
+      }
+      return playSpeechUrl(url, speechJob.queue.length > 0).then(function () {
+        if (generation !== speechJob.generation) return false;
+        if (state.needsUnlock) {
+          // autoplay blocked: abandon the queue, the next gesture replays it all
+          speechJob.generation += 1;
+          return false;
+        }
+        return pumpSpeech(generation);
+      });
     });
   }
 
@@ -1311,21 +1427,23 @@
   function requestSpeech(text, forced) {
     if (!text) return Promise.resolve(false);
     if (!forced && (state.voiceMuted || !state.voiceAvailable)) return Promise.resolve(false);
-    return api("/api/speak", { method: "POST", body: { text: text } })
-      .then(function (payload) { return playSpeechUrl(payload.url); })
-      .catch(function (error) {
-        // never pretend audio played: say what the backend said
-        if (forced) addMessage("system", "Voice: " + error.message);
-        return false;
-      });
+    var chunks = splitSpeech(text);
+    if (!chunks.length) return Promise.resolve(false);
+    stopSpeech();
+    var generation = speechJob.generation;
+    speechJob.text = text;
+    speechJob.queue = chunks.map(function (chunk, index) {
+      return { text: chunk, url: null, pending: null, failed: false, first: index === 0 };
+    });
+    return pumpSpeech(generation);
   }
 
   function unlockAudio() {
     if (!state.needsUnlock) return;
     state.needsUnlock = false;
-    var url = state.pendingSpeech;
     state.pendingSpeech = null;
-    if (url) playSpeechUrl(url);
+    // chunking means there is no single pending URL to resume: replay the reply
+    if (speechJob.text) requestSpeech(speechJob.text, true);
   }
 
   /* ---------------------------------------------------------------- recorder */
@@ -1805,6 +1923,9 @@
 
   function stopAll() {
     if (recorder.active()) recorder.cancel();
+    // clear the speech queue too: chunked speech is several files, and pausing
+    // the player alone would let the next sentence start right after
+    stopSpeech();
     state.speaking = false;
     try { player().pause(); } catch (e) {}
     api("/api/stop", { method: "POST" })

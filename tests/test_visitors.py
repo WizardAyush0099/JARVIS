@@ -159,6 +159,7 @@ def test_both_system_prompts_learn_about_the_visitor(jarvis):
         creator="Ayush",
         visitor=jarvis.visitor_brief(),
         language=jarvis.language_instruction("hello"),
+        now="Monday 01 January 2026, 12:00",
     )
     assert "Chief Minister" in answer_prompt
     assert "Do NOT say your owner's name" in answer_prompt
